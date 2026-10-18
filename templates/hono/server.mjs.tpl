@@ -34,6 +34,7 @@ if (!payTo) {
 const RESOURCE = __RESOURCE_JSON__;
 
 const app = new Hono();
+__EXERCISE_HOOK__
 app.use(
   paymentMiddlewareFromConfig(
     { [`${method} ${routePath}`]: { accepts: { scheme: "exact", price, network: NETWORK, payTo } } },

@@ -33,6 +33,7 @@ if (!payTo) {
 const RESOURCE = __RESOURCE_JSON__;
 
 const app = express();
+__EXERCISE_HOOK__
 app.use(
   paymentMiddlewareFromConfig(
     { [`${method} ${routePath}`]: { accepts: { scheme: "exact", price, network: NETWORK, payTo } } },

@@ -173,6 +173,7 @@ async function main() {
     generatedAt: new Date().toISOString(),
     wasitJson,
     harnessError,
+    exercise: project.exercise ?? null,
   });
   fs.writeFileSync(path.join(root, "report.json"), JSON.stringify(report, null, 2) + "\n");
   fs.writeFileSync(path.join(root, "report.md"), renderMarkdown(report));
