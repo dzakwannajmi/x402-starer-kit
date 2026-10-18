@@ -133,10 +133,10 @@ test("exercise status lists what failed, and the terminal and Markdown say it wi
   assert.deepEqual(r.exercise.observedFailing, ["X402-02"]);
   for (const out of [renderTerminal(r), renderMarkdown(r)]) {
     assert.match(out, /Exercise/);
-    assert.match(out, /seeded defect is still there \(failing: X402-02\)/);
+    assert.match(out, /same checks still fail \(X402-02\), so the defect is probably still there/);
     assert.match(out, /--hint/);
     for (const id of DEFECT_IDS) assert.ok(!out.includes(id));
   }
   const solved = buildReport({ ...common, wasitJson: wasitJson(allPass), exercise: { expectedFailing: ["X402-02"] } });
-  assert.match(renderTerminal(solved), /Solved: all checks pass/);
+  assert.match(renderTerminal(solved), /Solved: no check fails/);
 });

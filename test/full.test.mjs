@@ -4,7 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { TESTNET_USDC_ISSUER, checkPayerReady, ensureFullPayee, parsePrice, payerHelp } from "../lib/full.mjs";
-import { buildReport, FULL_NOTE } from "../lib/report.mjs";
+import { buildReport, maskSecrets, FULL_NOTE, FULL_UNPAID_NOTE, READONLY_NOTE } from "../lib/report.mjs";
+import { checkName } from "../lib/names.mjs";
+import { exerciseStatus } from "../lib/report.mjs";
 import { generateProject } from "../lib/generate.mjs";
 
 const PUB = "GCWG7X3ZEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEXTKPB2";
@@ -153,7 +155,65 @@ test("a full report says full mode and carries the full note", () => {
     full: true,
   });
   assert.equal(r.wasit.mode, "full");
-  assert.deepEqual(r.notes, [FULL_NOTE]);
+  // no X402-06 row in this fixture: the report must not claim a payment
+  assert.deepEqual(r.notes, [FULL_UNPAID_NOTE]);
+  const paid = { ...wasitJson, results: [...wasitJson.results, { id: "X402-06", name: "n", status: "PASS", detail: "d" }] };
+  const r2 = buildReport({ ...base(wasitJson), wasitJson: paid, full: true });
+  assert.deepEqual(r2.notes, [FULL_NOTE]);
+  const harness = buildReport({ ...base(wasitJson), wasitJson: null, harnessError: "x", full: true });
+  assert.deepEqual(harness.notes, []);
+  const ro = buildReport({ ...base(wasitJson), full: false });
+  assert.deepEqual(ro.notes, [READONLY_NOTE]);
+});
+
+function base(wasitJson) {
+  return {
+    project: { name: "n", seed: 1, variant: {} },
+    wasit: { version: "0.7.0", command: "wasit test" },
+    facilitator: { mode: "real", url: "u" },
+    kitVersion: "1",
+    generatedAt: "2026-10-19T00:00:00Z",
+    wasitJson,
+    harnessError: null,
+    exercise: null,
+  };
+}
+
+test("payer status with an error row is its own case, with Wasit's text", () => {
+  const row = [{ role: "x402", configured: true, error: "Invalid secret key" }];
+  const r = checkPayerReady(row, 0.01);
+  assert.equal(r.reason, "status-error");
+  const text = payerHelp(r, { price: "$0.01", wasitCommand: "w" });
+  assert.match(text, /Invalid secret key/);
+  assert.ok(!/undefined/.test(text));
+});
+
+test("a payer needs at least twice the price", () => {
+  assert.equal(checkPayerReady(status("0.015"), 0.01).reason, "low-usdc");
+  assert.equal(checkPayerReady(status("0.02"), 0.01).ok, true);
+});
+
+test("maskSecrets catches keys glued to a word and long hex runs", () => {
+  const key = "S" + "A".repeat(55);
+  assert.ok(!maskSecrets(`embed_${key}`).includes(key));
+  assert.ok(!maskSecrets(key).includes(key));
+  const hex128 = "ab".repeat(64);
+  assert.ok(!maskSecrets(`x${hex128}`.replace("x", " ")).includes(hex128));
+});
+
+test("a project name that looks like a key is rejected", () => {
+  assert.equal(checkName("S" + "A".repeat(55)).reason, "secret-like");
+  assert.equal(checkName("ab".repeat(32)).reason, "secret-like");
+  assert.equal(checkName("My App").ok, true);
+  assert.equal(checkName("a\u061cb").display, "ab");
+});
+
+test("exercise is only solved when Wasit says conformant and the expected checks pass", () => {
+  const rep = (outcome, results) => ({ outcome, counts: { errored: 0 }, results });
+  const ex = { expectedFailing: ["X402-02"] };
+  assert.equal(exerciseStatus(ex, rep("conformant", [{ id: "X402-02", status: "PASS" }])).status, "solved");
+  assert.equal(exerciseStatus(ex, rep("conformant", [])).status, "unknown");
+  assert.equal(exerciseStatus(ex, rep("no-verdict", [{ id: "X402-02", status: "SKIP" }])).status, "unknown");
 });
 
 test("generated projects ignore .env, ship scripts/full.mjs and a check:full script", () => {

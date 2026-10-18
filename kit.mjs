@@ -23,7 +23,8 @@ const USAGE = `x402-starter-kit
                    [--method GET|POST] [--dir <parent folder>] [--exercise [--defect <id>]]
 
   Creates a small x402 seller of your own on localhost (testnet only).
-  Anything you leave out (framework, method, path, theme, price) is picked from the seed.
+  You can set the framework and the method. Everything else (path, theme, price) comes from the seed.
+  Without --seed a random seed is used and printed.
 
   --exercise   break and fix: one defect is written into server.mjs on purpose; find it from the report.
                The defect is picked from the seed unless you name one with --defect.
@@ -78,8 +79,9 @@ if (defect !== undefined && !DEFECT_IDS.includes(defect)) {
 async function askName(rl) {
   for (;;) {
     const answer = await rl.question(msg("askName"));
-    if (!checkName(answer).ok) {
-      console.log(msg("badName"));
+    const c = checkName(answer);
+    if (!c.ok) {
+      console.log(msg(c.reason === "secret-like" ? "secretLikeName" : "badName"));
       continue;
     }
     return answer;
@@ -106,7 +108,7 @@ async function main() {
         console.log(
           msg("variant", { v: `${v.framework}, ${v.method} ${v.path}, ${v.resource}, price ${v.price}, ${v.network}, seed ${out.seed}` }),
         );
-        console.log("\n" + msg("next", { dir: out.slug }));
+        console.log("\n" + msg("next", { dir: path.relative(process.cwd(), out.dir) || out.dir }));
         if (out.exercise) console.log("\n" + msg("exerciseNext")); // never names the defect
         console.log("\n" + msg("testnet"));
         return;
@@ -126,7 +128,7 @@ async function main() {
 
 main().catch((e) => {
   if (e instanceof KitError) {
-    console.error(e.code === "exists" ? msg("exists", { dir: e.message }) : msg("badName"));
+    console.error(e.code === "exists" ? msg("exists", { dir: e.message }) : e.message === "secret-like" ? msg("secretLikeName") : msg("badName"));
   } else {
     console.error(e?.message || e);
   }
