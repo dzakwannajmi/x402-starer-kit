@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // x402-starter-kit: generate a small x402 seller on localhost (testnet only), then check it with Wasit.
-//   node kit.mjs new [--name "My project"] [--seed 123] [--dir <parent folder>]
+//   node kit.mjs new [--name "My project"] [--seed 123] [--framework express|hono] [--method GET|POST] [--dir <folder>]
 import path from "node:path";
 import readline from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { generateProject, KitError } from "./lib/generate.mjs";
 import { msg } from "./lib/messages.mjs";
 import { checkName } from "./lib/names.mjs";
+import { FRAMEWORKS, METHODS } from "./lib/variants.mjs";
 
 const major = Number(process.versions.node.split(".")[0]);
 if (major < 22) {
@@ -16,9 +17,11 @@ if (major < 22) {
 
 const USAGE = `x402-starter-kit
 
-  node kit.mjs new [--name "My project"] [--seed <number>] [--dir <parent folder>]
+  node kit.mjs new [--name "My project"] [--seed <number>] [--framework express|hono]
+                   [--method GET|POST] [--dir <parent folder>]
 
   Creates a small x402 seller of your own on localhost (testnet only).
+  Anything you leave out (framework, method, path, theme, price) is picked from the seed.
 `;
 
 const { positionals, values } = parseArgs({
@@ -26,6 +29,8 @@ const { positionals, values } = parseArgs({
   options: {
     name: { type: "string" },
     seed: { type: "string" },
+    framework: { type: "string" },
+    method: { type: "string" },
     dir: { type: "string" },
     help: { type: "boolean", short: "h" },
   },
@@ -44,6 +49,17 @@ if (values.seed !== undefined) {
     console.error(msg("badSeed"));
     process.exit(1);
   }
+}
+
+const framework = values.framework?.toLowerCase();
+const method = values.method?.toUpperCase();
+if (framework !== undefined && !FRAMEWORKS.includes(framework)) {
+  console.error(msg("badOption", { option: "--framework", allowed: FRAMEWORKS.join(", ") }));
+  process.exit(1);
+}
+if (method !== undefined && !METHODS.includes(method)) {
+  console.error(msg("badOption", { option: "--method", allowed: METHODS.join(", ") }));
+  process.exit(1);
 }
 
 async function askName(rl) {
@@ -71,10 +87,12 @@ async function main() {
     }
     for (;;) {
       try {
-        const out = generateProject({ name, seed, parentDir });
+        const out = generateProject({ name, seed, parentDir, framework, method });
         const v = out.variant;
         console.log("\n" + msg("created", { dir: out.dir }));
-        console.log(msg("variant", { v: `${v.framework}, ${v.resource}, price ${v.price}, ${v.network}, seed ${out.seed}` }));
+        console.log(
+          msg("variant", { v: `${v.framework}, ${v.method} ${v.path}, ${v.resource}, price ${v.price}, ${v.network}, seed ${out.seed}` }),
+        );
         console.log("\n" + msg("next", { dir: out.slug }));
         console.log("\n" + msg("testnet"));
         return;
