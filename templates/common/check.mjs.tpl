@@ -5,12 +5,15 @@
 //   npm run check                 uses the public testnet facilitator when it is reachable, otherwise offline mode
 //   npm run check -- --offline    force offline mode (a local stand-in for the facilitator; challenge checks only)
 //   npm run check -- --online     force the public testnet facilitator
+//   npm run check:full            all 10 checks, including real test payments (needs a funded testnet payer; see the README
+//                                 of your project or run it once to be told what is missing). Uses the public facilitator only.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildReport, renderMarkdown, renderTerminal, maskSecrets } from "./report.mjs";
+import { checkPayerReady, ensureFullPayee, parsePrice, payerHelp } from "./full.mjs";
 import { DEFAULT_FACILITATOR_URL, chooseFacilitatorMode, probeFacilitator, startStubFacilitator } from "./facilitator.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -25,10 +28,19 @@ const FACILITATOR_HINT = "The seller could not reach the facilitator. Check your
 
 const argv = process.argv.slice(2);
 for (const a of argv) {
-  if (a !== "--offline" && a !== "--online") {
-    console.error(`Unknown option ${a}. Use --offline or --online.`);
+  if (a !== "--offline" && a !== "--online" && a !== "--full") {
+    console.error(`Unknown option ${a}. Use --offline, --online or --full.`);
     process.exit(2);
   }
+}
+const FULL = argv.includes("--full");
+if (FULL && argv.includes("--offline")) {
+  console.error("--full needs the real facilitator: a payment cannot be settled without it. Remove --offline.");
+  process.exit(2);
+}
+if (FULL && process.env.FACILITATOR_URL) {
+  console.error("--full uses the public testnet facilitator only. Unset FACILITATOR_URL for this run.");
+  process.exit(2);
 }
 
 function freePort() {
@@ -94,13 +106,47 @@ async function wasitCommand() {
   return { cmd, prefix, shell, version: v.stdout.trim() };
 }
 
+/** Full run only: is the payer ready, and is there a payee? Returns { payee } or { stop: exitCode }. */
+async function prepareFull(wasit) {
+  const price = parsePrice(project.variant.price);
+  const shown = `npx -y @wasit-dev/cli@${WASIT_VERSION}`;
+  const st = await run(wasit.cmd, [...wasit.prefix, "wallet", "status", "--role", "x402", "--network", NETWORK, "--json"], { shell: wasit.shell });
+  let parsed = null;
+  try {
+    parsed = JSON.parse(st.stdout);
+  } catch {
+    console.error(`Could not read the payer status: ${maskSecrets(st.stderr || st.stdout)}`);
+    return { stop: 2 };
+  }
+  const ready = checkPayerReady(parsed, price);
+  if (!ready.ok) {
+    console.log(payerHelp(ready, { price: project.variant.price, wasitCommand: shown }));
+    return { stop: 2 };
+  }
+  console.log(`Payer ${ready.publicKey} holds ${ready.balance} USDC (testnet).`);
+  const stellar = await import("@stellar/stellar-sdk");
+  const { Keypair, Horizon, TransactionBuilder, Operation, Asset, Networks, BASE_FEE } = stellar;
+  try {
+    const r = await ensureFullPayee({
+      project,
+      stellar: { Keypair, Horizon, TransactionBuilder, Operation, Asset, Networks, BASE_FEE },
+      save: (p) => fs.writeFileSync(path.join(root, "project.json"), JSON.stringify(p, null, 2) + "\n"),
+    });
+    console.log(r.created ? `Created a throwaway payee ${r.payee} (nobody holds its secret key).` : `Payee ${r.payee}.`);
+    return { payee: r.payee };
+  } catch (e) {
+    console.error(maskSecrets(String(e?.message || e)));
+    return { stop: 2 };
+  }
+}
+
 async function main() {
   // 1. Which facilitator? Never probe when the participant already decided.
   const envUrl = process.env.FACILITATOR_URL || "";
-  const decided = Boolean(envUrl) || argv.includes("--offline") || argv.includes("--online");
+  const decided = Boolean(envUrl) || argv.includes("--offline") || argv.includes("--online") || FULL;
   const probeUrl = process.env.KIT_PROBE_URL || `${DEFAULT_FACILITATOR_URL}/supported`;
   const reachable = decided ? null : await probeFacilitator(probeUrl);
-  const choice = chooseFacilitatorMode({ envUrl, offline: argv.includes("--offline"), online: argv.includes("--online"), reachable });
+  const choice = chooseFacilitatorMode({ envUrl, offline: argv.includes("--offline"), online: argv.includes("--online") || FULL, reachable });
 
   let stub = null;
   let facilitatorUrl = choice.url;
@@ -114,12 +160,53 @@ async function main() {
     );
   }
 
+  // 1a. An exercise project holds a planted defect. Real payments only go to it once the last report says solved.
+  if (FULL && project.exercise) {
+    let last = null;
+    try {
+      last = JSON.parse(fs.readFileSync(path.join(root, "report.json"), "utf8"));
+    } catch {}
+    if (last?.exercise?.status !== "solved") {
+      console.error("This is an exercise project. Fix it first: run npm run check until the exercise says solved, then try the full run.");
+      await stub?.close();
+      process.exitCode = 2;
+      return;
+    }
+  }
+
+  // 1b. Full run: payer and payee must be ready before anything starts.
+  let fullPayee = null;
+  let wasit = { version: "unknown" };
+  if (FULL) {
+    try {
+      wasit = await wasitCommand();
+    } catch (e) {
+      console.error(String(e?.message || e));
+      await stub?.close();
+      process.exitCode = 2;
+      return;
+    }
+    const prep = await prepareFull(wasit);
+    if (prep.stop !== undefined) {
+      await stub?.close();
+      process.exitCode = prep.stop;
+      return;
+    }
+    fullPayee = prep.payee;
+  }
+
   // 2. Start the seller.
   const port = await freePort();
   const target = `http://127.0.0.1:${port}${routePath}`;
   const server = spawn(process.execPath, ["server.mjs"], {
     cwd: root,
-    env: { ...process.env, PORT: String(port), FACILITATOR_URL: facilitatorUrl },
+    // The seller never gets a key: anything that looks like one is dropped from its environment.
+    env: {
+      ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/PRIVATE_KEY|SECRET/i.test(k))),
+      PORT: String(port),
+      FACILITATOR_URL: facilitatorUrl,
+      ...(fullPayee ? { PAY_TO: fullPayee } : {}),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let serverLog = "";
@@ -138,15 +225,14 @@ async function main() {
   // 3. Run Wasit.
   let wasitJson = null;
   let harnessError = null;
-  let wasit = { version: "unknown" };
   const methodArgs = method === "POST" ? ["--method", "POST"] : [];
   try {
-    wasit = await wasitCommand();
+    if (!FULL) wasit = await wasitCommand();
     if (!(await waitForServer(target, server))) {
       harnessError = "The seller did not start: " + (serverLog || "no output");
     } else {
-      const args = [...wasit.prefix, "test", "--target", target, "--network", NETWORK, "--read-only", "--json", ...methodArgs];
-      const out = await run(wasit.cmd, args, { shell: wasit.shell });
+      const args = [...wasit.prefix, "test", "--target", target, "--network", NETWORK, ...(FULL ? [] : ["--read-only"]), "--json", ...methodArgs];
+      const out = await run(wasit.cmd, args, { shell: wasit.shell, timeoutMs: FULL ? 600000 : 180000 });
       try {
         wasitJson = JSON.parse(out.stdout);
       } catch {
@@ -164,7 +250,7 @@ async function main() {
     project,
     wasit: {
       version: wasit.version,
-      command: `wasit test --target ${target} --network ${NETWORK} --read-only --json${methodArgs.length ? " --method POST" : ""}`,
+      command: `wasit test --target ${target} --network ${NETWORK}${FULL ? "" : " --read-only"} --json${methodArgs.length ? " --method POST" : ""}`,
     },
     // "real" only for the public testnet facilitator, "stub" for the local stand-in, "custom" for anything else,
     // so a report never claims more than was used.
@@ -174,6 +260,7 @@ async function main() {
     wasitJson,
     harnessError,
     exercise: project.exercise ?? null,
+    full: FULL,
   });
   fs.writeFileSync(path.join(root, "report.json"), JSON.stringify(report, null, 2) + "\n");
   fs.writeFileSync(path.join(root, "report.md"), renderMarkdown(report));

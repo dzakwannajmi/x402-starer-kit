@@ -4,10 +4,14 @@
   "private": true,
   "type": "module",
   "description": "Internal workshop kit: generate a small x402 seller on localhost, check it with Wasit, get a report. Testnet only.",
-  "bin": { "x402-starter-kit": "kit.mjs" },
-  "engines": { "node": ">=22" },
+  "bin": {
+    "x402-starter-kit": "kit.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test test/*.test.mjs",
     "e2e": "node test/e2e.mjs"
   }
 }
