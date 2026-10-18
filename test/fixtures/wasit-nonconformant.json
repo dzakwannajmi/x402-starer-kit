@@ -1,0 +1,46 @@
+{
+  "outcome": "non-conformant",
+  "passed": 2,
+  "failed": 1,
+  "errored": 0,
+  "skipped": 2,
+  "results": [
+    {
+      "id": "X402-01",
+      "name": "402 Response Status",
+      "status": "PASS",
+      "detail": "Server responded with 402 as required.",
+      "destructive": false
+    },
+    {
+      "id": "X402-02",
+      "name": "Payment Header Present",
+      "status": "PASS",
+      "detail": "Payment header found.",
+      "destructive": false
+    },
+    {
+      "id": "X402-03",
+      "name": "Header Payload Decodable",
+      "status": "FAIL",
+      "detail": "Failed to decode/parse: Unterminated string in JSON at position 445 (line 1 column 446)",
+      "destructive": false,
+      "fix": "Base64-encode the JSON PaymentRequired object for the header; raw JSON or a truncated value does not decode.",
+      "docs": "https://usewasit.dev/docs/checks/x402"
+    },
+    {
+      "id": "X402-04",
+      "name": "Required Fields Present",
+      "status": "SKIP",
+      "detail": "Skipped: the payment header did not decode to JSON, so no payload was available to inspect.",
+      "destructive": false
+    },
+    {
+      "id": "X402-05",
+      "name": "Network Identifier Valid",
+      "status": "SKIP",
+      "detail": "Skipped: the payment header did not decode to JSON, so no payload was available to inspect.",
+      "destructive": false
+    }
+  ]
+}

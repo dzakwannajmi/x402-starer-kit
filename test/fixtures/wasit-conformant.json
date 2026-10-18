@@ -1,0 +1,14 @@
+{
+  "outcome": "conformant",
+  "passed": 5,
+  "failed": 0,
+  "errored": 0,
+  "skipped": 0,
+  "results": [
+    { "id": "X402-01", "name": "402 Response Status", "status": "PASS", "detail": "Server responded with 402 as required.", "destructive": false },
+    { "id": "X402-02", "name": "Payment Header Present", "status": "PASS", "detail": "Payment header found.", "destructive": false },
+    { "id": "X402-03", "name": "Header Payload Decodable", "status": "PASS", "detail": "Header decoded to valid JSON.", "destructive": false },
+    { "id": "X402-04", "name": "Required Fields Present", "status": "PASS", "detail": "All required v2 fields present.", "destructive": false },
+    { "id": "X402-05", "name": "Network Identifier Valid", "status": "PASS", "detail": "Network identifier \"stellar:testnet\" is valid.", "destructive": false }
+  ]
+}
