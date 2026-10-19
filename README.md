@@ -85,15 +85,18 @@ X402-07 to 10 send four payments your seller must refuse (a corrupted signature,
 underpayment and an expired authorization). The price is shown before it starts. It uses test funds only, on Stellar
 testnet, and needs the public testnet facilitator.
 
-You need a test payer that holds test USDC:
+You need a test payer that holds test USDC. The kit makes one for you:
 
 1. Answer yes to the question after `npm run check`, or run `npm run check:full`. If the project has no payer yet and
-   no `.env` file, the kit creates one for you on testnet: a new key, test XLM, and a USDC trustline. The secret key is
-   saved in `.env` in your project folder and is never shown. The public address is shown in the terminal and saved
-   in `payer-address.txt`, which is safe to share.
-2. Get test USDC for that address at https://faucet.circle.com (choose Stellar Testnet, paste the address). This step
-   is manual: there is no scriptable USDC faucet for Stellar testnet.
-3. Run `npm run check:full`.
+   no `.env` file, the kit creates one on testnet: a new key, test XLM, and a USDC trustline. It then swaps 10 test
+   XLM for about 8 or 9 test USDC on the public test exchange, so you do not need a faucet. The secret key is saved in
+   `.env` in your project folder and is never shown. The public address is shown in the terminal and saved in
+   `payer-address.txt`, which is safe to share.
+2. If you answered yes after `npm run check`, run `npm run check:full` now. If you ran `check:full` directly, it carries
+   on with the full run by itself.
+3. If the swap cannot be done (the test exchange had no price, or it failed), the kit says so and shows the manual
+   steps: get test USDC at https://faucet.circle.com (choose Stellar Testnet, paste the address), then run
+   `npm run check:full`.
 
 The payee, the account that receives the payment, is a throwaway account made by the kit. Its secret key is thrown
 away as soon as it is set up, so nobody can spend from it.
@@ -166,6 +169,7 @@ Paste only the reports. Never paste a `.env` file, `project.json`, or any key.
 | X402-01 FAIL and a message about the facilitator | Check your internet connection, or run `npm run check -- --offline` |
 | `Missing script: "feedback"` | Your project was made with an older kit. Make a new one with `node kit.mjs new` |
 | `check:full` says the payer has no USDC | Use the faucet steps it prints, wait a few seconds, run it again |
+| X402-10 shows ERROR with "signature has expired" | Run `npm run check:full` again. This happened in about half of the runs we tried on 2026-10-19 and passed on the next run; the cause is being looked at |
 
 ## For maintainers
 

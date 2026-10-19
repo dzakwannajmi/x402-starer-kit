@@ -49,27 +49,38 @@ test("payerHelp gives next steps and never prints key material", () => {
   }
 });
 
-function fakeStellar({ existing = null, neverAppears = false } = {}) {
-  const calls = { friendbot: 0, submitted: 0 };
+function fakeStellar({ existing = null, neverAppears = false, quote = null, swapFails = false } = {}) {
+  const calls = { friendbot: 0, submitted: 0, swapSubmitted: 0, ops: [] };
   class Server {
+    strictSendPaths() {
+      return { call: async () => ({ records: quote ? [{ destination_amount: quote, path: [] }] : [] }) };
+    }
     async loadAccount(id) {
       if (existing && id === existing.id) return { balances: existing.balances };
       if (neverAppears) throw new Error("not found");
       return { balances: [] };
     }
-    async submitTransaction() {
+    async submitTransaction(tx) {
       calls.submitted++;
+      if (tx.withSwap) {
+        calls.swapSubmitted++;
+        if (swapFails) throw new Error("op_under_dest_min");
+      }
     }
   }
   class TB {
-    addOperation() {
+    constructor() {
+      this.withSwap = false;
+    }
+    addOperation(op) {
+      if (op && op.swap) this.withSwap = true;
       return this;
     }
     setTimeout() {
       return this;
     }
     build() {
-      return { sign() {} };
+      return { sign() {}, withSwap: this.withSwap };
     }
   }
   return {
@@ -78,8 +89,8 @@ function fakeStellar({ existing = null, neverAppears = false } = {}) {
       Keypair: { random: () => ({ publicKey: () => "GNEWPAYEE", secret: () => "SHOULD-NEVER-BE-READ" }) },
       Horizon: { Server },
       TransactionBuilder: TB,
-      Operation: { changeTrust: () => ({}) },
-      Asset: class {},
+      Operation: { changeTrust: () => ({}), pathPaymentStrictSend: () => ({ swap: true }) },
+      Asset: Object.assign(class {}, { native: () => ({ native: true }) }),
       Networks: { TESTNET: "x" },
       BASE_FEE: "100",
     },
@@ -310,7 +321,7 @@ test("createPayer makes a funded payer, hands the secret only to writeEnv, and r
     writeEnv: (secret) => (written = secret),
     sleep: async () => {},
   });
-  assert.deepEqual(r, { publicKey: "GNEWPAYEE" });
+  assert.deepEqual(r, { publicKey: "GNEWPAYEE", swapped: false, usdcBalance: 0 });
   assert.equal(written, "SHOULD-NEVER-BE-READ"); // the secret reached writeEnv only
   assert.equal(calls.friendbot, 1);
   assert.equal(calls.submitted, 1); // the trustline
@@ -354,4 +365,39 @@ test("generated projects pin axios to a patched version through overrides", () =
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
   }
+});
+
+test("createPayer swaps test XLM for USDC when the exchange has a price, so no faucet is needed", async () => {
+  const { createPayer, payerCreatedText } = await import("../lib/full.mjs");
+  const { stellar, calls } = fakeStellar({ quote: "8.8" });
+  let written = null;
+  const r = await createPayer({ stellar, fetchImpl: async () => ({ ok: true, status: 200 }), writeEnv: (s) => (written = s), sleep: async () => {} });
+  assert.equal(r.swapped, true);
+  assert.equal(calls.swapSubmitted, 1);
+  assert.equal(calls.submitted, 1); // trustline and swap in one transaction
+  assert.equal(written, "SHOULD-NEVER-BE-READ");
+  const text = payerCreatedText(r.publicKey, { swapped: true, usdcBalance: 8.8 });
+  assert.match(text, /swapped 10 test XLM/);
+  assert.ok(!/faucet\.circle\.com|SHOULD-NEVER-BE-READ/.test(text));
+});
+
+test("createPayer falls back to the faucet steps when there is no price or the swap fails", async () => {
+  const { createPayer, payerCreatedText } = await import("../lib/full.mjs");
+  for (const opts of [{ quote: null }, { quote: "8.8", swapFails: true }, { quote: "0.2" }]) {
+    const { stellar, calls } = fakeStellar(opts);
+    let written = null;
+    const r = await createPayer({ stellar, fetchImpl: async () => ({ ok: true, status: 200 }), writeEnv: (s) => (written = s), sleep: async () => {} });
+    assert.equal(r.swapped, false, JSON.stringify(opts));
+    assert.equal(written, "SHOULD-NEVER-BE-READ");
+    assert.ok(calls.submitted >= 1);
+    assert.match(payerCreatedText(r.publicKey, r), /faucet\.circle\.com/);
+  }
+});
+
+test("next steps: a payer that already holds USDC goes straight to the full check", async () => {
+  const { nextStepsText, TEXT } = await import("../lib/nextsteps.mjs");
+  const base = { full: false, outcome: "conformant", exerciseUnsolved: false, answeredYes: true };
+  assert.equal(nextStepsText({ ...base, payerReady: true }), TEXT.runFullNow);
+  assert.equal(nextStepsText({ ...base, payerReady: false }), TEXT.runFull);
+  assert.ok(!/After you have test USDC/.test(TEXT.runFullNow));
 });

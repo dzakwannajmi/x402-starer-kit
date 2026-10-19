@@ -128,13 +128,14 @@ async function wasitCommand() {
 
 /**
  * Make a test payer in this project: the secret key goes into .env (never overwritten, never printed) and the PUBLIC
- * address into payer-address.txt. Prints the address and the faucet steps. Returns true when a payer was made.
+ * address into payer-address.txt. Prints the address (and the faucet steps if the payer holds no USDC yet). Returns the
+ * made payer ({ publicKey, swapped, usdcBalance }) or null.
  */
 async function setupPayer() {
   const envPath = path.join(root, ".env");
   if (fs.existsSync(envPath)) {
     console.log("A .env file already exists in this folder, so the kit did not make a payer. If it holds your test payer key you are ready; otherwise run npm run check:full for the steps.");
-    return false;
+    return null;
   }
   console.log("Creating a test payer on Stellar testnet (test funds only) ...");
   try {
@@ -144,12 +145,12 @@ async function setupPayer() {
       writeEnv: (secret) => fs.writeFileSync(envPath, `STELLAR_PRIVATE_KEY=${secret}\n`, { flag: "wx", mode: 0o600 }),
     });
     fs.writeFileSync(path.join(root, "payer-address.txt"), `${made.publicKey}\n`);
-    console.log(payerCreatedText(made.publicKey));
-    if (process.stdout.isTTY && !process.env.CI) openAddress(FAUCET_URL);
-    return true;
+    console.log(payerCreatedText(made.publicKey, made));
+    if (!made.swapped && process.stdout.isTTY && !process.env.CI) openAddress(FAUCET_URL);
+    return made;
   } catch (e) {
     console.error(maskSecrets(String(e?.message || e)));
-    return false;
+    return null;
   }
 }
 
@@ -184,6 +185,7 @@ async function prepareFull(wasit) {
     // No payer yet and no .env to protect: make one. The secret goes into .env and is never printed.
     console.log("No test payer yet.");
     const made = await setupPayer();
+    if (made?.swapped) return prepareFull(wasit); // it already holds test USDC: carry on with the full run
     if (!made) console.log(maskSecrets(payerHelp(ready, { price: project.variant.price, wasitCommand: shown })));
     return { stop: 2 };
   }
@@ -368,11 +370,12 @@ async function main() {
     if (answeredYes === undefined) answeredYes = false;
   }
   // Yes: make the payer now, so the participant only has to get test USDC and run the full check.
+  let payerReady = false;
   if (answeredYes === true) {
     console.log("");
-    await setupPayer();
+    payerReady = Boolean((await setupPayer())?.swapped);
   }
-  const text = nextStepsText({ ...ctx, answeredYes });
+  const text = nextStepsText({ ...ctx, answeredYes, payerReady });
   if (text) console.log("\n" + text);
 }
 
