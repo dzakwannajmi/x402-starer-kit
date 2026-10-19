@@ -228,3 +228,31 @@ test("generated projects ignore .env, ship scripts/full.mjs and a check:full scr
     fs.rmSync(parent, { recursive: true, force: true });
   }
 });
+
+test("the feedback link opens a new issue with the title and the questions filled in, and carries no secret", async () => {
+  const { buildFeedbackUrl, FEEDBACK_BODY, FEEDBACK_REPO } = await import("../lib/feedback.mjs");
+  const url = new URL(buildFeedbackUrl());
+  assert.equal(url.origin + url.pathname, `https://github.com/${FEEDBACK_REPO}/issues/new`);
+  assert.match(url.searchParams.get("title"), /^User feedback \(workshop kit\)/);
+  const body = url.searchParams.get("body");
+  assert.equal(body, FEEDBACK_BODY);
+  for (const h of ["## What did you try?", "## What happened?", "## What was confusing or slow?", "## What would you like Wasit or the kit to do next?", "## Consent"]) {
+    assert.ok(body.includes(h), h);
+  }
+  assert.match(body, /^Kind: workshop \(practice kit, generated project\)/);
+  assert.ok(buildFeedbackUrl().length < 6000, "stay well under GitHub's address length limit");
+  assert.ok(!/S[A-Z2-7]{55}|[0-9a-fA-F]{64}/.test(buildFeedbackUrl()));
+});
+
+test("generated projects ship the feedback script, and the run summary points to it", () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "kit-fb-"));
+  try {
+    const g = generateProject({ name: "Feedback Test", seed: 4, parentDir: parent });
+    assert.ok(fs.existsSync(path.join(g.dir, "scripts", "feedback.mjs")));
+    assert.ok(fs.existsSync(path.join(g.dir, "scripts", "feedback-lib.mjs")));
+    const pkg = JSON.parse(fs.readFileSync(path.join(g.dir, "package.json"), "utf8"));
+    assert.equal(pkg.scripts.feedback, "node scripts/feedback.mjs");
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
