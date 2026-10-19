@@ -342,3 +342,16 @@ test("the faucet help skips the trustline step when the payer already has one", 
   assert.equal(noLine.hasTrustline, false);
   assert.match(payerHelp(noLine, { price: "$0.01", wasitCommand: "w" }), /trustline/);
 });
+
+test("generated projects pin axios to a patched version through overrides", () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "kit-ax-"));
+  try {
+    for (const framework of ["express", "hono"]) {
+      const g = generateProject({ name: `Axios ${framework}`, seed: 6, parentDir: parent, framework });
+      const pkg = JSON.parse(fs.readFileSync(path.join(g.dir, "package.json"), "utf8"));
+      assert.equal(pkg.overrides.axios, "1.20.0");
+    }
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});

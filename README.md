@@ -151,6 +151,9 @@ Paste only the reports. Never paste a `.env` file, `project.json`, or any key.
 - The payer key lives only in `.env` in your project folder (on macOS and Linux readable by you alone), and `.env` is in `.gitignore`.
   Keep it private, never share or commit it, and use it for test money only.
 - Packages are pinned to exact versions and install scripts are switched off (`.npmrc`).
+- `axios`, used inside the Stellar SDK, is pinned to a patched version through `overrides` in each project's
+  `package.json`, so `npm install` reports no known vulnerabilities (checked 2026-10-19). Do not run `npm audit fix --force`:
+  it would change the pinned versions the x402 libraries need.
 - The project name you type is data. It is cleaned and is never written into code or used as a path.
 - Do not point Wasit at a service run by someone else without that operator's written permission.
 
