@@ -296,3 +296,49 @@ test("next steps: the question is only asked after a conformant read-only run in
   assert.match(TEXT.runFull, /npm run check:full/);
   assert.match(TEXT.runFeedback, /npm run feedback/);
 });
+
+test("createPayer makes a funded payer, hands the secret only to writeEnv, and returns the public address", async () => {
+  const { createPayer, payerCreatedText } = await import("../lib/full.mjs");
+  const { stellar, calls } = fakeStellar();
+  let written = null;
+  const r = await createPayer({
+    stellar,
+    fetchImpl: async () => {
+      calls.friendbot++;
+      return { ok: true, status: 200 };
+    },
+    writeEnv: (secret) => (written = secret),
+    sleep: async () => {},
+  });
+  assert.deepEqual(r, { publicKey: "GNEWPAYEE" });
+  assert.equal(written, "SHOULD-NEVER-BE-READ"); // the secret reached writeEnv only
+  assert.equal(calls.friendbot, 1);
+  assert.equal(calls.submitted, 1); // the trustline
+  const text = payerCreatedText(r.publicKey);
+  assert.ok(text.includes("GNEWPAYEE") && text.includes("faucet.circle.com") && !text.includes("SHOULD-NEVER-BE-READ"));
+});
+
+test("createPayer leaves nothing behind when funding fails", async () => {
+  const { createPayer } = await import("../lib/full.mjs");
+  const { stellar } = fakeStellar();
+  let written = false;
+  await assert.rejects(
+    createPayer({ stellar, fetchImpl: async () => ({ ok: false, status: 503 }), writeEnv: () => (written = true), sleep: async () => {} }),
+    /Friendbot.*503/,
+  );
+  assert.equal(written, false);
+  const { stellar: s2 } = fakeStellar({ neverAppears: true });
+  await assert.rejects(createPayer({ stellar: s2, fetchImpl: async () => ({ ok: true }), writeEnv: () => (written = true), sleep: async () => {} }), /did not appear/);
+  assert.equal(written, false);
+});
+
+test("the faucet help skips the trustline step when the payer already has one", () => {
+  const withLine = checkPayerReady(status("0.0000000"), 0.01);
+  assert.equal(withLine.reason, "no-usdc");
+  assert.equal(withLine.hasTrustline, true);
+  const helpWith = payerHelp(withLine, { price: "$0.01", wasitCommand: "w" });
+  assert.ok(!/trustline/.test(helpWith) && /1\. Open https:\/\/faucet\.circle\.com/.test(helpWith));
+  const noLine = checkPayerReady(status(null), 0.01);
+  assert.equal(noLine.hasTrustline, false);
+  assert.match(payerHelp(noLine, { price: "$0.01", wasitCommand: "w" }), /trustline/);
+});

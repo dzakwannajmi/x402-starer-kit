@@ -16,7 +16,7 @@ import path from "node:path";
 import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { buildReport, renderMarkdown, renderTerminal, maskSecrets } from "./report.mjs";
-import { checkPayerReady, ensureFullPayee, parsePrice, payerHelp } from "./full.mjs";
+import { FAUCET_URL, checkPayerReady, createPayer, ensureFullPayee, parsePrice, payerCreatedText, payerHelp } from "./full.mjs";
 import { FULL_QUESTION, nextStepsText, parseYesNo, shouldAsk } from "./nextsteps.mjs";
 import { DEFAULT_FACILITATOR_URL, chooseFacilitatorMode, probeFacilitator, startStubFacilitator } from "./facilitator.mjs";
 
@@ -126,6 +126,19 @@ async function wasitCommand() {
   return { cmd, prefix, shell, version: v.stdout.trim() };
 }
 
+/** Best effort: open an address in the default browser. If nothing happens, the address is already printed. */
+function openAddress(url) {
+  try {
+    const [cmd, args] =
+      process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["rundll32", ["url.dll,FileProtocolHandler", url]] : ["xdg-open", [url]];
+    const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // nothing else to do
+  }
+}
+
 /** Full run only: is the payer ready, and is there a payee? Returns { payee } or { stop: exitCode }. */
 async function prepareFull(wasit) {
   const price = parsePrice(project.variant.price);
@@ -139,6 +152,24 @@ async function prepareFull(wasit) {
     return { stop: 2 };
   }
   const ready = checkPayerReady(parsed, price);
+  const envPath = path.join(root, ".env");
+  if (!ready.ok && ready.reason === "not-configured" && !fs.existsSync(envPath)) {
+    // No payer yet and no .env to protect: make one. The secret goes into .env and is never printed.
+    console.log("No test payer yet. Creating one on Stellar testnet (test funds only) ...");
+    try {
+      const stellar = await import("@stellar/stellar-sdk");
+      const made = await createPayer({
+        stellar: { Keypair: stellar.Keypair, Horizon: stellar.Horizon, TransactionBuilder: stellar.TransactionBuilder, Operation: stellar.Operation, Asset: stellar.Asset, Networks: stellar.Networks, BASE_FEE: stellar.BASE_FEE },
+        writeEnv: (secret) => fs.writeFileSync(envPath, `STELLAR_PRIVATE_KEY=${secret}\n`, { flag: "wx", mode: 0o600 }),
+      });
+      console.log(payerCreatedText(made.publicKey));
+      if (process.stdout.isTTY && !process.env.CI) openAddress(FAUCET_URL);
+    } catch (e) {
+      console.error(maskSecrets(String(e?.message || e)));
+      console.log(maskSecrets(payerHelp(ready, { price: project.variant.price, wasitCommand: shown })));
+    }
+    return { stop: 2 };
+  }
   if (!ready.ok) {
     console.log(maskSecrets(payerHelp(ready, { price: project.variant.price, wasitCommand: shown })));
     return { stop: 2 };
