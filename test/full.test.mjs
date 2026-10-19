@@ -256,3 +256,19 @@ test("generated projects ship the feedback script, and the run summary points to
     fs.rmSync(parent, { recursive: true, force: true });
   }
 });
+
+test("the feedback form asks for report.md and report-full.md, and the example is marked as an example", async () => {
+  const { FEEDBACK_BODY, FEEDBACK_EXAMPLE } = await import("../lib/feedback.mjs");
+  assert.match(FEEDBACK_BODY, /report-full\.md/);
+  assert.match(FEEDBACK_BODY, /report\.md/);
+  assert.match(FEEDBACK_EXAMPLE, /^EXAMPLE \(not real feedback\)/);
+  assert.ok(!/S[A-Z2-7]{55}|[0-9a-fA-F]{64}/.test(FEEDBACK_EXAMPLE));
+});
+
+test("a full report has its own title", async () => {
+  const { renderMarkdown } = await import("../lib/report.mjs");
+  const wasitJson = JSON.parse(fs.readFileSync(new URL("./fixtures/wasit-conformant.json", import.meta.url), "utf8"));
+  const mk = (full) => renderMarkdown(buildReport({ ...base(wasitJson), full }));
+  assert.match(mk(true), /^# Full payment report: /);
+  assert.match(mk(false), /^# Check report: /);
+});

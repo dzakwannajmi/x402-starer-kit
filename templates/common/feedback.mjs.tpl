@@ -2,16 +2,29 @@
 // place. You write the answers and paste your report.md yourself, from your own GitHub account. The kit sends
 // nothing: this only opens a web address.
 //
-//   npm run feedback
+//   npm run feedback                 open the new-issue address
+//   npm run feedback -- --example    print a filled-in example first, to copy the shape from
 import { spawn } from "node:child_process";
-import { buildFeedbackUrl } from "./feedback-lib.mjs";
+import { FEEDBACK_EXAMPLE, buildFeedbackUrl } from "./feedback-lib.mjs";
+
+const arg = process.argv[2];
+if (arg !== undefined && arg !== "--example") {
+  console.error(`Unknown option ${arg}. Use: npm run feedback  or  npm run feedback -- --example`);
+  process.exit(2);
+}
+if (arg === "--example") {
+  console.log(FEEDBACK_EXAMPLE);
+  process.exit(0);
+}
 
 const url = buildFeedbackUrl();
 console.log("Open this address to write your feedback (it is a new issue on GitHub, written from your own account):");
 console.log("");
 console.log(url);
 console.log("");
-console.log("Paste your whole report.md in the block, and nothing else: not .env, not project.json, not the output of wallet create.");
+console.log("Paste your whole report.md in the first block, and your report-full.md in the second one if you ran npm run check:full.");
+console.log("Paste nothing else: not .env, not project.json, not the output of wallet create.");
+console.log("Want to see a filled-in example first?  npm run feedback -- --example");
 
 // Best effort: open the default browser. If this does nothing, copy the address above.
 try {
