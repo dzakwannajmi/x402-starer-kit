@@ -5,6 +5,9 @@
 //   npm run feedback                 open the new-issue address
 //   npm run feedback -- --example    print a filled-in example first, to copy the shape from
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { FEEDBACK_EXAMPLE, buildFeedbackUrl } from "./feedback-lib.mjs";
 
 const arg = process.argv[2];
@@ -17,13 +20,27 @@ if (arg === "--example") {
   process.exit(0);
 }
 
-const url = buildFeedbackUrl();
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const read = (name) => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(root, name), "utf8"));
+  } catch {
+    return null; // no such report yet
+  }
+};
+const readOnly = read("report.json");
+const full = read("report-full.json");
+const url = buildFeedbackUrl({ readOnly, full });
 console.log("Open this address to write your feedback (it is a new issue on GitHub, written from your own account):");
 console.log("");
 console.log(url);
 console.log("");
-console.log("Paste your whole report.md in the first block, and your report-full.md in the second one if you ran npm run check:full.");
-console.log("Paste nothing else: not .env, not project.json, not the output of wallet create.");
+console.log(
+  readOnly || full
+    ? `Your report summary is already filled in (${[readOnly && "npm run check", full && "npm run check:full"].filter(Boolean).join(" and ")}). Just answer the questions.`
+    : "No report found in this folder. Run npm run check first, so your results are filled in for you.",
+);
+console.log("Do not paste anything else: not .env, not project.json, not the output of wallet create.");
 console.log("Want to see a filled-in example first?  npm run feedback -- --example");
 
 // Best effort: open the default browser. If this does nothing, copy the address above.

@@ -141,11 +141,12 @@ After the workshop, please write your feedback yourself as a GitHub issue, from 
 npm run feedback
 ```
 
-This prints a web address and tries to open it. It starts a new issue with the questions already in place. Paste your
-whole `report.md` (and `report-full.md` if you ran the full check) in the blocks, and answer the questions in your own
-words. The kit sends nothing.
+This prints a web address and tries to open it. It starts a new issue with the questions already in place and a
+summary of your own report already filled in (from `npm run check` and, if you ran it, `npm run check:full`), so there
+is nothing to delete and nothing to paste. Just answer the questions in your own words. The kit sends nothing: you
+write and submit the issue yourself, from your own account.
 
-Paste only the reports. Never paste a `.env` file, `project.json`, or any key.
+Do not paste anything else. Never paste a `.env` file, `project.json`, or any key.
 
 ## Safety
 

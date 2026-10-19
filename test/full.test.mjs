@@ -240,7 +240,7 @@ test("generated projects ignore .env, ship scripts/full.mjs and a check:full scr
   }
 });
 
-test("the feedback link opens a new issue with the title and the questions filled in, and carries no secret", async () => {
+test("the feedback link opens a new issue with the title and the questions in place, and nothing to delete", async () => {
   const { buildFeedbackUrl, FEEDBACK_BODY, FEEDBACK_REPO } = await import("../lib/feedback.mjs");
   const url = new URL(buildFeedbackUrl());
   assert.equal(url.origin + url.pathname, `https://github.com/${FEEDBACK_REPO}/issues/new`);
@@ -250,9 +250,43 @@ test("the feedback link opens a new issue with the title and the questions fille
   for (const h of ["## What did you try?", "## What happened?", "## What was confusing or slow?", "## What would you like Wasit or the kit to do next?", "## Consent"]) {
     assert.ok(body.includes(h), h);
   }
-  assert.match(body, /^Kind: workshop \(practice kit, generated project\)/);
-  assert.ok(buildFeedbackUrl().length < 6000, "stay well under GitHub's address length limit");
+  // no instructions to delete: no intro paragraph, no hidden comments, no "paste here" placeholders
+  assert.ok(!/<!--|Thank you for trying|Please write this yourself|paste the whole|leave this empty/i.test(body));
   assert.ok(!/S[A-Z2-7]{55}|[0-9a-fA-F]{64}/.test(buildFeedbackUrl()));
+});
+
+test("the report summaries are filled in from the participant's own reports, and the address stays short", async () => {
+  const { buildFeedbackUrl, buildFeedbackBody, summarizeReport } = await import("../lib/feedback.mjs");
+  const mk = (mode, n, extra = []) => ({
+    wasit: { mode, version: "0.7.0" },
+    generatedAt: "2026-10-19T12:00:00Z",
+    outcome: "conformant",
+    counts: { passed: n, failed: 0, errored: 0, skipped: 0 },
+    results: [...Array.from({ length: n }, (_, i) => ({ id: `X402-${String(i + 1).padStart(2, "0")}`, name: `Check ${i + 1}`, status: "PASS", detail: "ok" })), ...extra],
+  });
+  const ro = mk("read-only", 5);
+  const full = mk("full", 10);
+  full.results[5].detail = "settled on-chain for exactly 50000 base units (tx 1a2c53...8ced)";
+  const body = buildFeedbackBody({ readOnly: ro, full });
+  assert.match(body, /My report \(npm run check\)/);
+  assert.match(body, /My report \(npm run check:full\)/);
+  assert.match(body, /Result: conformant: 10 passed/);
+  assert.match(body, /X402-06: settled on-chain/); // the payment proof is kept
+  assert.ok(!/<!--/.test(body));
+  assert.equal(summarizeReport(null), "");
+  assert.ok(buildFeedbackUrl({ readOnly: ro, full }).length < 6500);
+  // an oversized report is trimmed, never sent as an address that is too long
+  const huge = mk("full", 10);
+  huge.results[5].detail = "x".repeat(20000);
+  assert.ok(buildFeedbackUrl({ readOnly: ro, full: huge }).length <= 6500);
+  // no reports: still a usable form
+  assert.ok(!/<details>/.test(buildFeedbackBody()));
+});
+
+test("the feedback example is marked as an example and carries no secret", async () => {
+  const { FEEDBACK_EXAMPLE } = await import("../lib/feedback.mjs");
+  assert.match(FEEDBACK_EXAMPLE, /^EXAMPLE \(not real feedback\)/);
+  assert.ok(!/S[A-Z2-7]{55}|[0-9a-fA-F]{64}/.test(FEEDBACK_EXAMPLE));
 });
 
 test("generated projects ship the feedback script, and the run summary points to it", () => {
@@ -266,14 +300,6 @@ test("generated projects ship the feedback script, and the run summary points to
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
   }
-});
-
-test("the feedback form asks for report.md and report-full.md, and the example is marked as an example", async () => {
-  const { FEEDBACK_BODY, FEEDBACK_EXAMPLE } = await import("../lib/feedback.mjs");
-  assert.match(FEEDBACK_BODY, /report-full\.md/);
-  assert.match(FEEDBACK_BODY, /report\.md/);
-  assert.match(FEEDBACK_EXAMPLE, /^EXAMPLE \(not real feedback\)/);
-  assert.ok(!/S[A-Z2-7]{55}|[0-9a-fA-F]{64}/.test(FEEDBACK_EXAMPLE));
 });
 
 test("a full report has its own title", async () => {
