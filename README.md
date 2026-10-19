@@ -122,7 +122,7 @@ problem and fix it. When no check fails, the exercise says it is solved. `npm ru
 | File | Made by | Contains |
 | --- | --- | --- |
 | `report.md`, `report.json` | `npm run check` | The five free checks, each PASS, FAIL, SKIP or ERROR with Wasit's reason |
-| `report-full.md`, `report-full.json` | `npm run check:full` | All ten checks, with the payment proof in the X402-06 row (amount, payee, masked transaction hash) |
+| `report-full.md`, `report-full.json` | `npm run check:full` | All ten checks and a "Payment proof" section: the full transaction hash, the payer and the payee, each with a Stellar Expert link so anyone can check the payment on the test network |
 
 The report is built by code from Wasit's own output. The kit never decides a result and nothing is written by a model.
 Keys and long hex values are masked.
@@ -142,8 +142,9 @@ npm run feedback
 ```
 
 This prints a web address and tries to open it. It starts a new issue with the questions already in place and a
-summary of your own report already filled in (from `npm run check` and, if you ran it, `npm run check:full`), so there
-is nothing to delete and nothing to paste. Just answer the questions in your own words. The kit sends nothing: you
+summary of your own report already filled in (from `npm run check` and, if you ran it, `npm run check:full`), with the
+time of the run in UTC and in Indonesian time (WIB, WITA and WIT) and, for a full run, links to the payment
+transaction, the payer and the payee on Stellar Expert. There is nothing to delete and nothing to paste. Just answer the questions in your own words. The kit sends nothing: you
 write and submit the issue yourself, from your own account.
 
 Do not paste anything else. Never paste a `.env` file, `project.json`, or any key.

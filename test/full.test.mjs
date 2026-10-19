@@ -427,3 +427,52 @@ test("next steps: a payer that already holds USDC goes straight to the full chec
   assert.equal(nextStepsText({ ...base, payerReady: false }), TEXT.runFull);
   assert.ok(!/After you have test USDC/.test(TEXT.runFullNow));
 });
+
+test("run time is shown in UTC and in the three Indonesian zones", async () => {
+  const { formatRunTime } = await import("../lib/report.mjs");
+  assert.equal(formatRunTime("2026-10-19T13:32:36.628Z"), "2026-10-19 13:32 UTC (20:32 WIB, 21:32 WITA, 22:32 WIT)");
+  assert.equal(formatRunTime("2026-10-19T20:05:00Z"), "2026-10-19 20:05 UTC (03:05 WIB, 04:05 WITA, 05:05 WIT)");
+  assert.equal(formatRunTime("not a time"), "");
+});
+
+test("the payment proof comes from Wasit's own X402-06 text, with the full hash and Stellar Expert links", async () => {
+  const { extractPayment, buildReport, renderMarkdown } = await import("../lib/report.mjs");
+  const { buildFeedbackBody } = await import("../lib/feedback.mjs");
+  const hash = "804d6d" + "a".repeat(54) + "044c";
+  const payee = "GAPKSGHHOUKC6PSHP7E6FAG6UB7D243BJ262F7F64TDSSKDW7YVN75UM";
+  const payer = "GCP4DXPV3P26OJEEDY54SEVSFQPKRBIT76MOANUEUPK33UTDCGI75N7M";
+  const wasitJson = JSON.parse(fs.readFileSync(new URL("./fixtures/wasit-conformant.json", import.meta.url), "utf8"));
+  const withPay = {
+    ...wasitJson,
+    results: [...wasitJson.results, { id: "X402-06", name: "n", status: "PASS", detail: `Valid payment accepted (HTTP 200) and settled on-chain for exactly the advertised 500000 base units of CBIEL to ${payee}, verified from the transfer event (tx ${hash}).` }],
+  };
+  const p = extractPayment(withPay, payer);
+  assert.equal(p.txHash, hash);
+  assert.equal(p.payee, payee);
+  assert.equal(p.payer, payer);
+  assert.equal(p.links.tx, `https://stellar.expert/explorer/testnet/tx/${hash}`);
+  assert.equal(p.links.payer, `https://stellar.expert/explorer/testnet/account/${payer}`);
+  // no matching text, or a failing check: no proof, nothing guessed
+  assert.equal(extractPayment(wasitJson, payer), null);
+  assert.equal(extractPayment({ results: [{ id: "X402-06", status: "FAIL", detail: `(tx ${hash})` }] }, payer), null);
+  assert.equal(extractPayment(withPay, "not-an-address").payer, null);
+
+  const report = buildReport({ ...base(withPay), full: true, payer });
+  assert.equal(report.payment.txHash, hash);
+  assert.ok(!JSON.stringify(report.results).includes(hash)); // the shortened text in the rows stays shortened
+  const md = renderMarkdown(report);
+  assert.match(md, /## Payment proof/);
+  assert.ok(md.includes(`https://stellar.expert/explorer/testnet/tx/${hash}`));
+  assert.match(md, /Run time:/);
+
+  const body = buildFeedbackBody({ full: report });
+  assert.ok(body.includes(`[${hash}](https://stellar.expert/explorer/testnet/tx/${hash})`));
+  assert.ok(body.includes(`[${payer}](https://stellar.expert/explorer/testnet/account/${payer})`));
+  assert.ok(body.includes(`[${payee}](https://stellar.expert/explorer/testnet/account/${payee})`));
+  assert.match(body, /Run time: \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC \(\d{2}:\d{2} WIB, \d{2}:\d{2} WITA, \d{2}:\d{2} WIT\)/);
+  assert.ok(!/S[A-Z2-7]{55}/.test(body));
+  // a read-only report has a run time but no payment lines
+  const ro = buildFeedbackBody({ readOnly: buildReport({ ...base(wasitJson), full: false }) });
+  assert.match(ro, /Run time:/);
+  assert.ok(!/Payment transaction/.test(ro));
+});

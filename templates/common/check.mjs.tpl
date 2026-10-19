@@ -203,7 +203,7 @@ async function prepareFull(wasit) {
       save: (p) => fs.writeFileSync(path.join(root, "project.json"), JSON.stringify(p, null, 2) + "\n"),
     });
     console.log(r.created ? `Created a throwaway payee ${r.payee} (nobody holds its secret key).` : `Payee ${r.payee}.`);
-    return { payee: r.payee };
+    return { payee: r.payee, payer: ready.publicKey };
   } catch (e) {
     console.error(maskSecrets(String(e?.message || e)));
     return { stop: 2 };
@@ -250,6 +250,7 @@ async function main() {
 
   // 1b. Full run: payer and payee must be ready before anything starts.
   let fullPayee = null;
+  let fullPayer = null;
   let wasit = { version: "unknown" };
   if (FULL) {
     try {
@@ -267,6 +268,7 @@ async function main() {
       return;
     }
     fullPayee = prep.payee;
+    fullPayer = prep.payer;
   }
 
   // 2. Start the seller.
@@ -341,6 +343,7 @@ async function main() {
     harnessError,
     exercise: project.exercise ?? null,
     full: FULL,
+    payer: fullPayer,
   });
   const reportName = FULL ? "report-full" : "report";
   fs.writeFileSync(path.join(root, `${reportName}.json`), JSON.stringify(report, null, 2) + "\n");
