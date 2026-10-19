@@ -272,3 +272,27 @@ test("a full report has its own title", async () => {
   assert.match(mk(true), /^# Full payment report: /);
   assert.match(mk(false), /^# Check report: /);
 });
+
+test("next steps: the question is only asked after a conformant read-only run in a terminal", async () => {
+  const { parseYesNo, shouldAsk, nextStepsText, TEXT } = await import("../lib/nextsteps.mjs");
+  assert.equal(parseYesNo(" Yes "), true);
+  assert.equal(parseYesNo("N"), false);
+  assert.equal(parseYesNo("maybe"), null);
+  assert.equal(parseYesNo(undefined), null);
+  const ok = { full: false, outcome: "conformant", exerciseUnsolved: false, interactive: true };
+  assert.equal(shouldAsk(ok), true);
+  assert.equal(shouldAsk({ ...ok, interactive: false }), false);
+  assert.equal(shouldAsk({ ...ok, full: true }), false);
+  assert.equal(shouldAsk({ ...ok, outcome: "non-conformant" }), false);
+  assert.equal(shouldAsk({ ...ok, exerciseUnsolved: true }), false);
+
+  const base = { full: false, outcome: "conformant", exerciseUnsolved: false };
+  assert.equal(nextStepsText({ ...base, answeredYes: true }), TEXT.runFull);
+  assert.equal(nextStepsText({ ...base, answeredYes: false }), TEXT.runFeedback);
+  assert.equal(nextStepsText(base), TEXT.both);
+  assert.equal(nextStepsText({ ...base, full: true }), TEXT.runFeedback);
+  assert.equal(nextStepsText({ ...base, outcome: "non-conformant" }), null);
+  assert.equal(nextStepsText({ ...base, exerciseUnsolved: true }), null);
+  assert.match(TEXT.runFull, /npm run check:full/);
+  assert.match(TEXT.runFeedback, /npm run feedback/);
+});

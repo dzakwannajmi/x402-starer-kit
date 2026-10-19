@@ -13,9 +13,11 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { buildReport, renderMarkdown, renderTerminal, maskSecrets } from "./report.mjs";
 import { checkPayerReady, ensureFullPayee, parsePrice, payerHelp } from "./full.mjs";
+import { FULL_QUESTION, nextStepsText, parseYesNo, shouldAsk } from "./nextsteps.mjs";
 import { DEFAULT_FACILITATOR_URL, chooseFacilitatorMode, probeFacilitator, startStubFacilitator } from "./facilitator.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -298,6 +300,27 @@ async function main() {
   console.log(`Report    ./${reportName}.md  ./${reportName}.json`);
   if (/Failed to fetch supported kinds/i.test(serverLog)) console.log("\n" + (envUrl ? FACILITATOR_HINT_CUSTOM : FULL ? FACILITATOR_HINT_FULL : FACILITATOR_HINT));
   process.exitCode = report.outcome === "conformant" ? 0 : report.outcome === "non-conformant" ? 1 : 2;
+
+  // What to do next. The question only appears in a real terminal after a conformant read-only run.
+  const exerciseUnsolved = Boolean(project.exercise) && report.exercise?.status !== "solved";
+  const ctx = { full: FULL, outcome: report.outcome, exerciseUnsolved };
+  let answeredYes;
+  if (shouldAsk({ ...ctx, interactive: process.stdin.isTTY && process.stdout.isTTY && !process.env.CI })) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      for (let i = 0; i < 3 && answeredYes === undefined; i++) {
+        const parsed = parseYesNo(await rl.question("\n" + FULL_QUESTION));
+        if (parsed !== null) answeredYes = parsed;
+      }
+    } catch {
+      // the terminal closed: treat it as no
+    } finally {
+      rl.close();
+    }
+    if (answeredYes === undefined) answeredYes = false;
+  }
+  const text = nextStepsText({ ...ctx, answeredYes });
+  if (text) console.log("\n" + text);
 }
 
 main().catch((e) => {
