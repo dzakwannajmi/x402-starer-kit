@@ -64,7 +64,8 @@ Run these inside the project folder.
 | `npm run exercise -- --reveal` | Practice mode only: the answer |
 
 After a successful `npm run check` in a terminal, the kit asks whether you want to run the full payment check now. Yes
-prints the command to run (`npm run check:full`). No prints the command to write your feedback.
+makes your test payer right away (see the next section) and tells you what to do next. No prints the command to write
+your feedback.
 
 Options of `node kit.mjs new`:
 
@@ -86,12 +87,13 @@ testnet, and needs the public testnet facilitator.
 
 You need a test payer that holds test USDC:
 
-1. Run `npm run check:full`. If the project has no payer yet and no `.env` file, the kit creates one for you on
-   testnet: a new key, test XLM, and a USDC trustline. The secret key is saved in `.env` in your project folder and is
-   never shown. The terminal shows only the public address.
+1. Answer yes to the question after `npm run check`, or run `npm run check:full`. If the project has no payer yet and
+   no `.env` file, the kit creates one for you on testnet: a new key, test XLM, and a USDC trustline. The secret key is
+   saved in `.env` in your project folder and is never shown. The public address is shown in the terminal and saved
+   in `payer-address.txt`, which is safe to share.
 2. Get test USDC for that address at https://faucet.circle.com (choose Stellar Testnet, paste the address). This step
    is manual: there is no scriptable USDC faucet for Stellar testnet.
-3. Run `npm run check:full` again.
+3. Run `npm run check:full`.
 
 The payee, the account that receives the payment, is a throwaway account made by the kit. Its secret key is thrown
 away as soon as it is set up, so nobody can spend from it.

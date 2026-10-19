@@ -126,6 +126,33 @@ async function wasitCommand() {
   return { cmd, prefix, shell, version: v.stdout.trim() };
 }
 
+/**
+ * Make a test payer in this project: the secret key goes into .env (never overwritten, never printed) and the PUBLIC
+ * address into payer-address.txt. Prints the address and the faucet steps. Returns true when a payer was made.
+ */
+async function setupPayer() {
+  const envPath = path.join(root, ".env");
+  if (fs.existsSync(envPath)) {
+    console.log("A .env file already exists in this folder, so the kit did not make a payer. If it holds your test payer key you are ready; otherwise run npm run check:full for the steps.");
+    return false;
+  }
+  console.log("Creating a test payer on Stellar testnet (test funds only) ...");
+  try {
+    const stellar = await import("@stellar/stellar-sdk");
+    const made = await createPayer({
+      stellar: { Keypair: stellar.Keypair, Horizon: stellar.Horizon, TransactionBuilder: stellar.TransactionBuilder, Operation: stellar.Operation, Asset: stellar.Asset, Networks: stellar.Networks, BASE_FEE: stellar.BASE_FEE },
+      writeEnv: (secret) => fs.writeFileSync(envPath, `STELLAR_PRIVATE_KEY=${secret}\n`, { flag: "wx", mode: 0o600 }),
+    });
+    fs.writeFileSync(path.join(root, "payer-address.txt"), `${made.publicKey}\n`);
+    console.log(payerCreatedText(made.publicKey));
+    if (process.stdout.isTTY && !process.env.CI) openAddress(FAUCET_URL);
+    return true;
+  } catch (e) {
+    console.error(maskSecrets(String(e?.message || e)));
+    return false;
+  }
+}
+
 /** Best effort: open an address in the default browser. If nothing happens, the address is already printed. */
 function openAddress(url) {
   try {
@@ -155,19 +182,9 @@ async function prepareFull(wasit) {
   const envPath = path.join(root, ".env");
   if (!ready.ok && ready.reason === "not-configured" && !fs.existsSync(envPath)) {
     // No payer yet and no .env to protect: make one. The secret goes into .env and is never printed.
-    console.log("No test payer yet. Creating one on Stellar testnet (test funds only) ...");
-    try {
-      const stellar = await import("@stellar/stellar-sdk");
-      const made = await createPayer({
-        stellar: { Keypair: stellar.Keypair, Horizon: stellar.Horizon, TransactionBuilder: stellar.TransactionBuilder, Operation: stellar.Operation, Asset: stellar.Asset, Networks: stellar.Networks, BASE_FEE: stellar.BASE_FEE },
-        writeEnv: (secret) => fs.writeFileSync(envPath, `STELLAR_PRIVATE_KEY=${secret}\n`, { flag: "wx", mode: 0o600 }),
-      });
-      console.log(payerCreatedText(made.publicKey));
-      if (process.stdout.isTTY && !process.env.CI) openAddress(FAUCET_URL);
-    } catch (e) {
-      console.error(maskSecrets(String(e?.message || e)));
-      console.log(maskSecrets(payerHelp(ready, { price: project.variant.price, wasitCommand: shown })));
-    }
+    console.log("No test payer yet.");
+    const made = await setupPayer();
+    if (!made) console.log(maskSecrets(payerHelp(ready, { price: project.variant.price, wasitCommand: shown })));
     return { stop: 2 };
   }
   if (!ready.ok) {
@@ -349,6 +366,11 @@ async function main() {
       rl.close();
     }
     if (answeredYes === undefined) answeredYes = false;
+  }
+  // Yes: make the payer now, so the participant only has to get test USDC and run the full check.
+  if (answeredYes === true) {
+    console.log("");
+    await setupPayer();
   }
   const text = nextStepsText({ ...ctx, answeredYes });
   if (text) console.log("\n" + text);
