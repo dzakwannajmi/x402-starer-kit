@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { FEEDBACK_EXAMPLE, buildFeedbackUrl } from "./feedback-lib.mjs";
+import { FEEDBACK_EXAMPLE, buildFeedbackUrl, canAutoOpen } from "./feedback-lib.mjs";
 
 const arg = process.argv[2];
 if (arg !== undefined && arg !== "--example") {
@@ -43,7 +43,14 @@ console.log(
 console.log("Do not paste anything else: not .env, not project.json, not the output of wallet create.");
 console.log("Want to see a filled-in example first?  npm run feedback -- --example");
 
-// Best effort: open the default browser. If this does nothing, copy the address above.
+// Best effort: open the default browser. If this does nothing, copy the address above. On Windows a long address is not
+// opened for you, because the browser may receive it cut short and show a form without the questions.
+if (!canAutoOpen({ platform: process.platform, url })) {
+  console.log("");
+  console.log("This address is long, so it is not opened for you on Windows (it could be cut short). Copy the whole address above");
+  console.log("and paste it into your browser's address bar.");
+  process.exit(0);
+}
 try {
   const [cmd, args] =
     process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["rundll32", ["url.dll,FileProtocolHandler", url]] : ["xdg-open", [url]];

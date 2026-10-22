@@ -89,7 +89,7 @@ You need a test payer that holds test USDC. The kit makes one for you:
 
 1. Answer yes to the question after `npm run check`, or run `npm run check:full`. If the project has no payer yet and
    no `.env` file, the kit creates one on testnet: a new key, test XLM, and a USDC trustline. It then swaps 10 test
-   XLM for about 8 or 9 test USDC on the public test exchange, so you do not need a faucet. The secret key is saved in
+   XLM for a few test USDC (one run on 2026-10-19 gave about 8.8; the exchange rate changes) on the public test exchange, so you do not need a faucet. The secret key is saved in
    `.env` in your project folder and is never shown. The public address is shown in the terminal and saved in
    `payer-address.txt`, which is safe to share.
 2. If you answered yes after `npm run check`, run `npm run check:full` now. If you ran `check:full` directly, it carries
@@ -125,7 +125,7 @@ problem and fix it. When no check fails, the exercise says it is solved. `npm ru
 | `report-full.md`, `report-full.json` | `npm run check:full` | All ten checks and a "Payment proof" section: the full transaction hash, the payer and the payee, each with a Stellar Expert link so anyone can check the payment on the test network |
 
 The report is built by code from Wasit's own output. The kit never decides a result and nothing is written by a model.
-Keys and long hex values are masked.
+Keys are masked. The full transaction hash is shown on purpose: it is public chain data, and it is what lets anyone check the payment.
 
 Read a report like this: PASS means the check passed; FAIL means the service did not behave as the check requires;
 SKIP means the check did not run and the line says why; ERROR means Wasit could not reach a result. A read-only run

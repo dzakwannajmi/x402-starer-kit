@@ -17,7 +17,7 @@ import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { buildReport, renderMarkdown, renderTerminal, maskSecrets } from "./report.mjs";
 import { FAUCET_URL, checkPayerReady, createPayer, ensureFullPayee, parsePrice, payerCreatedText, payerHelp } from "./full.mjs";
-import { FULL_QUESTION, nextStepsText, parseYesNo, shouldAsk } from "./nextsteps.mjs";
+import { FULL_QUESTION, askYesNo, nextStepsText, shouldAsk } from "./nextsteps.mjs";
 import { DEFAULT_FACILITATOR_URL, chooseFacilitatorMode, probeFacilitator, startStubFacilitator } from "./facilitator.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -144,12 +144,19 @@ async function setupPayer() {
       stellar: { Keypair: stellar.Keypair, Horizon: stellar.Horizon, TransactionBuilder: stellar.TransactionBuilder, Operation: stellar.Operation, Asset: stellar.Asset, Networks: stellar.Networks, BASE_FEE: stellar.BASE_FEE },
       writeEnv: (secret) => fs.writeFileSync(envPath, `STELLAR_PRIVATE_KEY=${secret}\n`, { flag: "wx", mode: 0o600 }),
     });
-    fs.writeFileSync(path.join(root, "payer-address.txt"), `${made.publicKey}\n`);
+    try {
+      fs.writeFileSync(path.join(root, "payer-address.txt"), `${made.publicKey}\n`);
+    } catch (e) {
+      // The payer already exists and its key is in .env: a missing address file must not hide that.
+      console.error(`Could not save payer-address.txt (${maskSecrets(String(e?.message || e))}). The payer is saved in .env; its address is shown below.`);
+    }
     console.log(payerCreatedText(made.publicKey, made));
     if (!made.swapped && process.stdout.isTTY && !process.env.CI) openAddress(FAUCET_URL);
     return made;
   } catch (e) {
     console.error(maskSecrets(String(e?.message || e)));
+    // The key is written last, so a .env that exists now was written by this run: say so, so nobody makes a second payer by hand.
+    if (fs.existsSync(envPath)) console.error("A payer key was already saved in .env before this error. Do not make another one: run npm run check:full again.");
     return null;
   }
 }
@@ -361,16 +368,10 @@ async function main() {
   if (shouldAsk({ ...ctx, interactive: process.stdin.isTTY && process.stdout.isTTY && !process.env.CI })) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     try {
-      for (let i = 0; i < 3 && answeredYes === undefined; i++) {
-        const parsed = parseYesNo(await rl.question("\n" + FULL_QUESTION));
-        if (parsed !== null) answeredYes = parsed;
-      }
-    } catch {
-      // the terminal closed: treat it as no
+      answeredYes = await askYesNo((prompt) => rl.question(prompt), (line) => console.log(line), "\n" + FULL_QUESTION);
     } finally {
       rl.close();
     }
-    if (answeredYes === undefined) answeredYes = false;
   }
   // Yes: make the payer now, so the participant only has to get test USDC and run the full check.
   let payerReady = false;

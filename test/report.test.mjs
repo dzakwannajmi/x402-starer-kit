@@ -93,3 +93,16 @@ test("the kit speaks English only: no Bahasa Indonesia strings in any output", (
   assert.ok(!/\b(Hasil|Catatan|lulus|gagal|dilewati|sesuai|Ringkasan|Pengecekan|Perintah)\b/.test(all));
   assert.equal(r.disclaimerId, undefined);
 });
+
+test("Wasit's summary numbers must match its own rows, otherwise nothing is trusted", () => {
+  const w = fixture("wasit-conformant");
+  const ok = buildReport({ ...common, wasitJson: w });
+  assert.equal(ok.outcome, "conformant");
+  // Numbers that say 0 passed next to five PASS rows, and a missing number, both give a harness error, never a report.
+  for (const bad of [{ ...w, passed: 0 }, { ...w, passed: undefined }, { ...w, failed: 1 }, { ...w, skipped: 2 }]) {
+    const r = buildReport({ ...common, wasitJson: bad });
+    assert.equal(r.outcome, "harness-error");
+    assert.deepEqual(r.results, []);
+    assert.match(r.error, /do not match/);
+  }
+});

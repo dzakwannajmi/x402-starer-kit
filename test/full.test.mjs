@@ -168,7 +168,7 @@ test("a full report says full mode and carries the full note", () => {
   assert.equal(r.wasit.mode, "full");
   // no X402-06 row in this fixture: the report must not claim a payment
   assert.deepEqual(r.notes, [FULL_UNPAID_NOTE]);
-  const paid = { ...wasitJson, results: [...wasitJson.results, { id: "X402-06", name: "n", status: "PASS", detail: "d" }] };
+  const paid = { ...wasitJson, passed: wasitJson.passed + 1, results: [...wasitJson.results, { id: "X402-06", name: "n", status: "PASS", detail: "d" }] };
   const r2 = buildReport({ ...base(wasitJson), wasitJson: paid, full: true });
   assert.deepEqual(r2.notes, [FULL_NOTE]);
   const harness = buildReport({ ...base(wasitJson), wasitJson: null, harnessError: "x", full: true });
@@ -444,6 +444,7 @@ test("the payment proof comes from Wasit's own X402-06 text, with the full hash 
   const wasitJson = JSON.parse(fs.readFileSync(new URL("./fixtures/wasit-conformant.json", import.meta.url), "utf8"));
   const withPay = {
     ...wasitJson,
+    passed: wasitJson.passed + 1, // the added row is a PASS: the summary numbers must still match the rows
     results: [...wasitJson.results, { id: "X402-06", name: "n", status: "PASS", detail: `Valid payment accepted (HTTP 200) and settled on-chain for exactly the advertised 500000 base units of CBIEL to ${payee}, verified from the transfer event (tx ${hash}).` }],
   };
   const p = extractPayment(withPay, payer);
@@ -475,4 +476,115 @@ test("the payment proof comes from Wasit's own X402-06 text, with the full hash 
   const ro = buildFeedbackBody({ readOnly: buildReport({ ...base(wasitJson), full: false }) });
   assert.match(ro, /Run time:/);
   assert.ok(!/Payment transaction/.test(ro));
+});
+
+// ---- review fixes of 2026-10-22 ----
+
+test("a long feedback address is not opened for the participant on Windows, but is on macOS and Linux", async () => {
+  const { canAutoOpen, WINDOWS_AUTO_OPEN_MAX, buildFeedbackUrl } = await import("../lib/feedback.mjs");
+  const short = "https://github.com/wasit-dev/Wasit/issues/new?title=x";
+  const long = "https://github.com/wasit-dev/Wasit/issues/new?body=" + "a".repeat(WINDOWS_AUTO_OPEN_MAX);
+  assert.equal(canAutoOpen({ platform: "win32", url: short }), true);
+  assert.equal(canAutoOpen({ platform: "win32", url: long }), false);
+  assert.equal(canAutoOpen({ platform: "darwin", url: long }), true);
+  assert.equal(canAutoOpen({ platform: "linux", url: long }), true);
+  // The empty form is short enough to open on Windows too.
+  assert.equal(canAutoOpen({ platform: "win32", url: buildFeedbackUrl({}) }), true);
+});
+
+test("the yes/no question explains a wrong answer and never turns into yes by itself", async () => {
+  const { askYesNo } = await import("../lib/nextsteps.mjs");
+  const run = async (answers) => {
+    const said = [];
+    const it = answers[Symbol.iterator]();
+    const result = await askYesNo(
+      async () => {
+        const n = it.next();
+        if (n.done) throw new Error("closed");
+        if (n.value instanceof Error) throw n.value;
+        return n.value;
+      },
+      (t) => said.push(t),
+      "q",
+    );
+    return { result, said };
+  };
+  assert.deepEqual(await run(["yes"]), { result: true, said: [] });
+  assert.deepEqual(await run(["no"]), { result: false, said: [] });
+  assert.deepEqual(await run(["ya", "Y"]), { result: true, said: ["Please type yes or no."] });
+  const three = await run(["ya", "iya", "mungkin"]);
+  assert.equal(three.result, false);
+  assert.deepEqual(three.said, ["Please type yes or no.", "Please type yes or no.", "That is not yes or no, so it counts as no."]);
+  assert.equal((await run([""])).result, false); // the terminal closed after one empty answer
+  assert.equal((await run([new Error("closed")])).result, false);
+});
+
+test("createPayer moves exactly 10 test XLM on testnet to the payer itself, with a 80% price guard", async () => {
+  const { createPayer, SWAP_XLM, SWAP_MIN_SHARE, TESTNET_HORIZON_URL, FRIENDBOT_URL, TESTNET_USDC_ISSUER: ISSUER } = await import("../lib/full.mjs");
+  const seen = { horizon: [], passphrase: [], ops: [], friendbot: [] };
+  class Server {
+    constructor(url) {
+      seen.horizon.push(url);
+    }
+    strictSendPaths() {
+      return { call: async () => ({ records: [{ destination_amount: "9.0", path: [] }] }) };
+    }
+    async loadAccount() {
+      return { balances: [] };
+    }
+    async submitTransaction() {}
+  }
+  class TB {
+    constructor(acc, opts) {
+      seen.passphrase.push(opts.networkPassphrase);
+    }
+    addOperation(op) {
+      seen.ops.push(op);
+      return this;
+    }
+    setTimeout() {
+      return this;
+    }
+    build() {
+      return { sign() {} };
+    }
+  }
+  class Asset {
+    constructor(code, issuer) {
+      this.code = code;
+      this.issuer = issuer;
+    }
+    static native() {
+      return { native: true };
+    }
+  }
+  const stellar = {
+    Keypair: { random: () => ({ publicKey: () => "GNEWPAYER", secret: () => "SHOULD-NEVER-BE-READ" }) },
+    Horizon: { Server },
+    TransactionBuilder: TB,
+    Operation: { changeTrust: (a) => ({ kind: "trust", ...a }), pathPaymentStrictSend: (a) => ({ kind: "swap", ...a }) },
+    Asset,
+    Networks: { TESTNET: "TESTNET-PASSPHRASE", PUBLIC: "PUBLIC-PASSPHRASE" },
+    BASE_FEE: "100",
+  };
+  const r = await createPayer({ stellar, fetchImpl: async (u) => (seen.friendbot.push(String(u)), { ok: true, status: 200 }), writeEnv: () => {}, sleep: async () => {} });
+  assert.equal(r.swapped, true);
+  // Only the test network: its Horizon, its Friendbot, its passphrase.
+  assert.deepEqual(seen.horizon, [TESTNET_HORIZON_URL]);
+  assert.ok(seen.passphrase.length >= 1 && seen.passphrase.every((p) => p === "TESTNET-PASSPHRASE"));
+  assert.ok(seen.friendbot.every((u) => u.startsWith(`${FRIENDBOT_URL}?addr=GNEWPAYER`)));
+  // The swap: 10 XLM, to the payer itself, for test USDC, accepting at least 80% of the quote (9.0 * 0.8 = 7.2).
+  const swaps = seen.ops.filter((o) => o.kind === "swap");
+  assert.equal(swaps.length, 1);
+  assert.equal(SWAP_XLM, "10");
+  assert.equal(swaps[0].sendAmount, "10");
+  assert.deepEqual(swaps[0].sendAsset, { native: true });
+  assert.equal(swaps[0].destination, "GNEWPAYER");
+  assert.equal(swaps[0].destAsset.code, "USDC");
+  assert.equal(swaps[0].destAsset.issuer, ISSUER);
+  assert.equal(SWAP_MIN_SHARE, 0.8);
+  assert.equal(swaps[0].destMin, "7.2000000");
+  // The trustline is for the same test USDC.
+  const trust = seen.ops.filter((o) => o.kind === "trust");
+  assert.ok(trust.length >= 1 && trust.every((o) => o.asset.issuer === ISSUER));
 });
