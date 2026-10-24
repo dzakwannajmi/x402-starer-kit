@@ -49,22 +49,28 @@ test("payerHelp gives next steps and never prints key material", () => {
   }
 });
 
-function fakeStellar({ existing = null, neverAppears = false, quote = null, swapFails = false } = {}) {
+// events (optional): an array that records each network step in order, so a test can see what ran when.
+function fakeStellar({ existing = null, neverAppears = false, quote = null, swapFails = false, trustFails = false, secret = "SHOULD-NEVER-BE-READ", events = null } = {}) {
   const calls = { friendbot: 0, submitted: 0, swapSubmitted: 0, ops: [] };
   class Server {
     strictSendPaths() {
+      events?.push("quote");
       return { call: async () => ({ records: quote ? [{ destination_amount: quote, path: [] }] : [] }) };
     }
     async loadAccount(id) {
+      events?.push("load");
       if (existing && id === existing.id) return { balances: existing.balances };
       if (neverAppears) throw new Error("not found");
       return { balances: [] };
     }
     async submitTransaction(tx) {
+      events?.push(tx.withSwap ? "submit-swap" : "submit-trust");
       calls.submitted++;
       if (tx.withSwap) {
         calls.swapSubmitted++;
         if (swapFails) throw new Error("op_under_dest_min");
+      } else if (trustFails) {
+        throw new Error("tx_failed");
       }
     }
   }
@@ -86,7 +92,7 @@ function fakeStellar({ existing = null, neverAppears = false, quote = null, swap
   return {
     calls,
     stellar: {
-      Keypair: { random: () => ({ publicKey: () => "GNEWPAYEE", secret: () => "SHOULD-NEVER-BE-READ" }) },
+      Keypair: { random: () => ({ publicKey: () => "GNEWPAYEE", secret: () => secret }) },
       Horizon: { Server },
       TransactionBuilder: TB,
       Operation: { changeTrust: () => ({}), pathPaymentStrictSend: () => ({ swap: true }) },
@@ -346,6 +352,7 @@ test("createPayer makes a funded payer, hands the secret only to writeEnv, and r
     },
     writeEnv: (secret) => (written = secret),
     sleep: async () => {},
+    say: () => {},
   });
   assert.deepEqual(r, { publicKey: "GNEWPAYEE", swapped: false, usdcBalance: 0 });
   assert.equal(written, "SHOULD-NEVER-BE-READ"); // the secret reached writeEnv only
@@ -360,12 +367,12 @@ test("createPayer leaves nothing behind when funding fails", async () => {
   const { stellar } = fakeStellar();
   let written = false;
   await assert.rejects(
-    createPayer({ stellar, fetchImpl: async () => ({ ok: false, status: 503 }), writeEnv: () => (written = true), sleep: async () => {} }),
+    createPayer({ stellar, fetchImpl: async () => ({ ok: false, status: 503 }), writeEnv: () => (written = true), sleep: async () => {}, say: () => {} }),
     /Friendbot.*503/,
   );
   assert.equal(written, false);
   const { stellar: s2 } = fakeStellar({ neverAppears: true });
-  await assert.rejects(createPayer({ stellar: s2, fetchImpl: async () => ({ ok: true }), writeEnv: () => (written = true), sleep: async () => {} }), /did not appear/);
+  await assert.rejects(createPayer({ stellar: s2, fetchImpl: async () => ({ ok: true }), writeEnv: () => (written = true), sleep: async () => {}, say: () => {} }), /did not appear/);
   assert.equal(written, false);
 });
 
@@ -397,7 +404,7 @@ test("createPayer swaps test XLM for USDC when the exchange has a price, so no f
   const { createPayer, payerCreatedText } = await import("../lib/full.mjs");
   const { stellar, calls } = fakeStellar({ quote: "8.8" });
   let written = null;
-  const r = await createPayer({ stellar, fetchImpl: async () => ({ ok: true, status: 200 }), writeEnv: (s) => (written = s), sleep: async () => {} });
+  const r = await createPayer({ stellar, fetchImpl: async () => ({ ok: true, status: 200 }), writeEnv: (s) => (written = s), sleep: async () => {}, say: () => {} });
   assert.equal(r.swapped, true);
   assert.equal(calls.swapSubmitted, 1);
   assert.equal(calls.submitted, 1); // trustline and swap in one transaction
@@ -412,7 +419,7 @@ test("createPayer falls back to the faucet steps when there is no price or the s
   for (const opts of [{ quote: null }, { quote: "8.8", swapFails: true }, { quote: "0.2" }]) {
     const { stellar, calls } = fakeStellar(opts);
     let written = null;
-    const r = await createPayer({ stellar, fetchImpl: async () => ({ ok: true, status: 200 }), writeEnv: (s) => (written = s), sleep: async () => {} });
+    const r = await createPayer({ stellar, fetchImpl: async () => ({ ok: true, status: 200 }), writeEnv: (s) => (written = s), sleep: async () => {}, say: () => {} });
     assert.equal(r.swapped, false, JSON.stringify(opts));
     assert.equal(written, "SHOULD-NEVER-BE-READ");
     assert.ok(calls.submitted >= 1);
@@ -573,7 +580,7 @@ test("createPayer moves exactly 10 test XLM on testnet to the payer itself, with
     Networks: { TESTNET: "TESTNET-PASSPHRASE", PUBLIC: "PUBLIC-PASSPHRASE" },
     BASE_FEE: "100",
   };
-  const r = await createPayer({ stellar, fetchImpl: async (u) => (seen.friendbot.push(String(u)), { ok: true, status: 200 }), writeEnv: () => {}, sleep: async () => {} });
+  const r = await createPayer({ stellar, fetchImpl: async (u) => (seen.friendbot.push(String(u)), { ok: true, status: 200 }), writeEnv: () => {}, sleep: async () => {}, say: () => {} });
   assert.equal(r.swapped, true);
   // Only the test network: its Horizon, its Friendbot, its passphrase.
   assert.deepEqual(seen.horizon, [TESTNET_HORIZON_URL]);
@@ -606,4 +613,109 @@ test("formatUsdc turns base units into USDC with 7 decimals and never guesses", 
   assert.equal(formatUsdc(null), null);
   assert.equal(formatUsdc("1e6"), null);
   assert.equal(formatUsdc("-5"), null);
+});
+
+// ---- progress while the payer is made (2026-10-24) ----
+
+// Shaped like a real Stellar secret key, so the S[A-Z2-7]{55} checks below can actually catch it.
+const KEY_LIKE = "S" + "C".repeat(55);
+
+/** Runs createPayer on the fake network. events holds each step and each progress line (by its PAYER_PROGRESS name) in order. */
+async function runCreatePayer(opts, { fetchOk = true, say } = {}) {
+  const { createPayer, PAYER_PROGRESS } = await import("../lib/full.mjs");
+  const nameOf = (line) => Object.entries(PAYER_PROGRESS).find(([, v]) => v === line)?.[0] ?? line;
+  const events = [];
+  const lines = [];
+  const { stellar } = fakeStellar({ ...opts, secret: KEY_LIKE, events });
+  let written = null;
+  let result;
+  let error;
+  try {
+    result = await createPayer({
+      stellar,
+      fetchImpl: async () => (events.push("friendbot"), fetchOk ? { ok: true, status: 200 } : { ok: false, status: 503 }),
+      writeEnv: (s) => (events.push("writeEnv"), (written = s)),
+      sleep: async () => {},
+      say: say ?? ((line) => (events.push(`say:${nameOf(line)}`), lines.push(line))),
+    });
+  } catch (e) {
+    error = e;
+  }
+  return { result, error, written, events, lines };
+}
+
+test("createPayer says each step just before it runs, in order, and never shows the key", async () => {
+  const { PAYER_PROGRESS, SWAP_XLM } = await import("../lib/full.mjs");
+  const start = ["say:friendbot", "friendbot", "load", "say:quote", "quote"];
+  const cases = [
+    { opts: { quote: "8.8" }, steps: [...start, "say:swap", "submit-swap", "load", "writeEnv"] },
+    { opts: { quote: null }, steps: [...start, "say:noQuote", "load", "submit-trust", "writeEnv"] },
+    { opts: { quote: "0.2" }, steps: [...start, "say:noQuote", "load", "submit-trust", "writeEnv"] }, // under 1 USDC: no usable price
+    { opts: { quote: "8.8", swapFails: true }, steps: [...start, "say:swap", "submit-swap", "say:swapFailed", "load", "submit-trust", "writeEnv"] },
+  ];
+  for (const { opts, steps } of cases) {
+    const r = await runCreatePayer(opts);
+    assert.equal(r.error, undefined, JSON.stringify(opts));
+    assert.deepEqual(r.events, steps, JSON.stringify(opts));
+    assert.equal(r.written, KEY_LIKE); // the key still reaches writeEnv, and only writeEnv
+    assert.ok(r.lines.length >= 3);
+    for (const line of r.lines) assert.ok(!/S[A-Z2-7]{55}/.test(line) && !line.includes(KEY_LIKE), line);
+  }
+  // The amount in the words is the amount the swap sends.
+  assert.ok(PAYER_PROGRESS.quote.includes(`${SWAP_XLM} test XLM`));
+  assert.ok(PAYER_PROGRESS.swap.includes(`swapping ${SWAP_XLM} test XLM for test USDC`));
+  for (const v of Object.values(PAYER_PROGRESS)) assert.ok(!/S[A-Z2-7]{55}|[0-9a-fA-F]{64}/.test(v), v);
+});
+
+test("createPayer fails exactly as before when a step fails, with progress up to that step only", async () => {
+  const fb = await runCreatePayer({}, { fetchOk: false });
+  assert.equal(fb.error.message, "Friendbot (the public testnet faucet for XLM) answered HTTP 503. Try again in a minute.");
+  assert.deepEqual(fb.events, ["say:friendbot", "friendbot"]);
+  assert.equal(fb.written, null);
+
+  const gone = await runCreatePayer({ neverAppears: true });
+  assert.equal(gone.error.message, "The new payer account did not appear on testnet in time. Try again.");
+  // still 8 tries; the wait is said once
+  assert.deepEqual(gone.events, ["say:friendbot", "friendbot", "load", "say:waiting", ...Array(7).fill("load")]);
+  assert.equal(gone.written, null);
+
+  const trust = await runCreatePayer({ quote: null, trustFails: true });
+  assert.equal(trust.error.message, "tx_failed"); // the network's own error passes through untouched
+  assert.deepEqual(trust.events, ["say:friendbot", "friendbot", "load", "say:quote", "quote", "say:noQuote", "load", "submit-trust"]);
+  assert.equal(trust.written, null);
+
+  for (const r of [fb, gone, trust]) assert.ok(r.lines.every((l) => !/S[A-Z2-7]{55}/.test(l)));
+});
+
+test("a progress line that cannot be printed never changes what happens to the payer or its key", async () => {
+  const boom = () => {
+    throw new Error("EPIPE");
+  };
+  const quiet = await runCreatePayer({ quote: "8.8" }, { say: () => {} });
+  const broken = await runCreatePayer({ quote: "8.8" }, { say: boom });
+  assert.equal(broken.error, undefined);
+  assert.deepEqual(broken.result, quiet.result);
+  assert.deepEqual(broken.events, quiet.events); // the same steps in the same order
+  assert.equal(broken.written, KEY_LIKE);
+  const brokenFb = await runCreatePayer({}, { fetchOk: false, say: boom });
+  assert.equal(brokenFb.error.message, "Friendbot (the public testnet faucet for XLM) answered HTTP 503. Try again in a minute.");
+  assert.equal(brokenFb.written, null);
+  // an async say that rejects is ignored too: no unhandled rejection after the key was funded
+  const rejecting = await runCreatePayer({ quote: "8.8" }, { say: () => Promise.reject(new Error("async EPIPE")) });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(rejecting.error, undefined);
+  assert.deepEqual(rejecting.events, quiet.events);
+  assert.equal(rejecting.written, KEY_LIKE);
+});
+
+test("the generated check script prints the payer progress through maskSecrets", () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "kit-say-"));
+  try {
+    const g = generateProject({ name: "Say Test", seed: 7, parentDir: parent });
+    const check = fs.readFileSync(path.join(g.dir, "scripts", "check.mjs"), "utf8");
+    assert.match(check, /createPayer\(\{[\s\S]*?say: \(line\) => console\.log\(maskSecrets\(line\)\)[\s\S]*?\}\);/);
+    assert.match(fs.readFileSync(path.join(g.dir, "scripts", "full.mjs"), "utf8"), /export const PAYER_PROGRESS/);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
 });

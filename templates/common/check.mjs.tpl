@@ -143,6 +143,7 @@ async function setupPayer() {
     const made = await createPayer({
       stellar: { Keypair: stellar.Keypair, Horizon: stellar.Horizon, TransactionBuilder: stellar.TransactionBuilder, Operation: stellar.Operation, Asset: stellar.Asset, Networks: stellar.Networks, BASE_FEE: stellar.BASE_FEE },
       writeEnv: (secret) => fs.writeFileSync(envPath, `STELLAR_PRIVATE_KEY=${secret}\n`, { flag: "wx", mode: 0o600 }),
+      say: (line) => console.log(maskSecrets(line)), // progress while the network works; fixed text, masked all the same
     });
     try {
       fs.writeFileSync(path.join(root, "payer-address.txt"), `${made.publicKey}\n`);
