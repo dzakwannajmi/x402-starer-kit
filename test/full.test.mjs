@@ -6,7 +6,7 @@ import path from "node:path";
 import { TESTNET_USDC_ISSUER, checkPayerReady, ensureFullPayee, parsePrice, payerHelp } from "../lib/full.mjs";
 import { buildReport, maskSecrets, FULL_NOTE, FULL_UNPAID_NOTE, READONLY_NOTE } from "../lib/report.mjs";
 import { checkName } from "../lib/names.mjs";
-import { exerciseStatus } from "../lib/report.mjs";
+import { exerciseStatus, formatUsdc } from "../lib/report.mjs";
 import { generateProject } from "../lib/generate.mjs";
 
 const PUB = "GCWG7X3ZEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEXTKPB2";
@@ -451,6 +451,8 @@ test("the payment proof comes from Wasit's own X402-06 text, with the full hash 
   assert.equal(p.txHash, hash);
   assert.equal(p.payee, payee);
   assert.equal(p.payer, payer);
+  assert.equal(p.amountBaseUnits, "500000");
+  assert.equal(p.amountUsdc, "0.05");
   assert.equal(p.links.tx, `https://stellar.expert/explorer/testnet/tx/${hash}`);
   assert.equal(p.links.payer, `https://stellar.expert/explorer/testnet/account/${payer}`);
   // no matching text, or a failing check: no proof, nothing guessed
@@ -463,11 +465,13 @@ test("the payment proof comes from Wasit's own X402-06 text, with the full hash 
   assert.ok(!JSON.stringify(report.results).includes(hash)); // the shortened text in the rows stays shortened
   const md = renderMarkdown(report);
   assert.match(md, /## Payment proof/);
+  assert.match(md, /\*\*Amount:\*\* 500000 base units = 0\.05 USDC/);
   assert.ok(md.includes(`https://stellar.expert/explorer/testnet/tx/${hash}`));
   assert.match(md, /Run time:/);
 
   const body = buildFeedbackBody({ full: report });
   assert.ok(body.includes(`[${hash}](https://stellar.expert/explorer/testnet/tx/${hash})`));
+  assert.ok(body.includes("- Amount: 500000 base units = 0.05 USDC (7 decimals)"));
   assert.ok(body.includes(`[${payer}](https://stellar.expert/explorer/testnet/account/${payer})`));
   assert.ok(body.includes(`[${payee}](https://stellar.expert/explorer/testnet/account/${payee})`));
   assert.match(body, /Run time: \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC \(\d{2}:\d{2} WIB, \d{2}:\d{2} WITA, \d{2}:\d{2} WIT\)/);
@@ -511,10 +515,12 @@ test("the yes/no question explains a wrong answer and never turns into yes by it
   };
   assert.deepEqual(await run(["yes"]), { result: true, said: [] });
   assert.deepEqual(await run(["no"]), { result: false, said: [] });
-  assert.deepEqual(await run(["ya", "Y"]), { result: true, said: ["Please type yes or no."] });
+  assert.deepEqual(await run(["ya", "Y"]), { result: true, said: ["Please type y (yes) or n (no)."] });
+  assert.deepEqual(await run(["y"]), { result: true, said: [] });
+  assert.deepEqual(await run(["N"]), { result: false, said: [] });
   const three = await run(["ya", "iya", "mungkin"]);
   assert.equal(three.result, false);
-  assert.deepEqual(three.said, ["Please type yes or no.", "Please type yes or no.", "That is not yes or no, so it counts as no."]);
+  assert.deepEqual(three.said, ["Please type y (yes) or n (no).", "Please type y (yes) or n (no).", "That is not y or n, so it counts as no."]);
   assert.equal((await run([""])).result, false); // the terminal closed after one empty answer
   assert.equal((await run([new Error("closed")])).result, false);
 });
@@ -587,4 +593,17 @@ test("createPayer moves exactly 10 test XLM on testnet to the payer itself, with
   // The trustline is for the same test USDC.
   const trust = seen.ops.filter((o) => o.kind === "trust");
   assert.ok(trust.length >= 1 && trust.every((o) => o.asset.issuer === ISSUER));
+});
+
+test("formatUsdc turns base units into USDC with 7 decimals and never guesses", () => {
+  assert.equal(formatUsdc("1000000"), "0.1");
+  assert.equal(formatUsdc("500000"), "0.05");
+  assert.equal(formatUsdc("10000"), "0.001");
+  assert.equal(formatUsdc("50000"), "0.005");
+  assert.equal(formatUsdc("10000000"), "1");
+  assert.equal(formatUsdc("12345678"), "1.2345678");
+  assert.equal(formatUsdc("0"), "0");
+  assert.equal(formatUsdc(null), null);
+  assert.equal(formatUsdc("1e6"), null);
+  assert.equal(formatUsdc("-5"), null);
 });
