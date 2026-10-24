@@ -1,6 +1,6 @@
 {
   "name": "x402-starter-kit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Internal workshop kit: generate a small x402 seller on localhost, check it with Wasit, get a report. Testnet only.",
