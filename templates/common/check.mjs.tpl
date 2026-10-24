@@ -16,7 +16,7 @@ import path from "node:path";
 import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { buildReport, renderMarkdown, renderTerminal, maskSecrets } from "./report.mjs";
-import { FAUCET_URL, checkPayerReady, createPayer, ensureFullPayee, parsePrice, payerCreatedText, payerHelp } from "./full.mjs";
+import { ENV_LOOKUP_TEXT, FAUCET_URL, createPayer, ensureFullPayee, existingPayerText, parsePrice, payerCreatedText, payerHelp, readPayerStatus } from "./full.mjs";
 import { FULL_QUESTION, askYesNo, nextStepsText, shouldAsk } from "./nextsteps.mjs";
 import { DEFAULT_FACILITATOR_URL, chooseFacilitatorMode, probeFacilitator, startStubFacilitator } from "./facilitator.mjs";
 
@@ -27,10 +27,13 @@ const NETWORK = "stellar:testnet";
 // Wasit runs through npx in its own folder, NOT inside this project: its dependency tree (it needs an older
 // @stellar/stellar-sdk for MPP) would clash with the newer one the x402 libraries use here.
 const WASIT_VERSION = "0.7.0";
+const WASIT_SHOWN = `npx -y @wasit-dev/cli@${WASIT_VERSION}`; // how the payer help tells the participant to run Wasit
 const IS_WIN = process.platform === "win32";
 const FACILITATOR_HINT = "The seller could not reach the public testnet facilitator. Check your internet connection, or run: npm run check -- --offline";
 const FACILITATOR_HINT_CUSTOM = "The seller could not reach the facilitator at FACILITATOR_URL. Check that address, or unset FACILITATOR_URL.";
 const FACILITATOR_HINT_FULL = "The seller could not reach the public testnet facilitator. Check your internet connection and run again.";
+const FULL_HINT_CUSTOM = "npm run check:full uses the public testnet facilitator only: unset FACILITATOR_URL before you run it.";
+const PAYER_LOOKUP_TIMEOUT_MS = 30000; // after a yes, the payer lookup gives up after this long (prepareFull keeps run()'s default)
 
 if (Number(process.versions.node.split(".")[0]) < 22) {
   console.error(`Node.js 22 or newer is required. You have ${process.versions.node}. Install Node.js 22 or newer, then run this again.`);
@@ -127,15 +130,32 @@ async function wasitCommand() {
 }
 
 /**
+ * The status of the payer a full run would use, read-only. Wasit runs in this folder (run() uses cwd: root) and loads
+ * .env from its working directory at start-up (`import "dotenv/config"`), so it sees the same STELLAR_PRIVATE_KEY a
+ * full run pays with: the one in .env, or the one exported in the shell (dotenv does not override it). `wallet status`
+ * works out the public address from that key and reads its testnet balances; it signs and sends nothing.
+ * `timeoutMs` defaults to run()'s own limit.
+ */
+function payerStatus(wasit, { timeoutMs } = {}) {
+  const args = [...wasit.prefix, "wallet", "status", "--role", "x402", "--network", NETWORK, "--json"];
+  return readPayerStatus(() => run(wasit.cmd, args, { shell: wasit.shell, timeoutMs }), parsePrice(project.variant.price));
+}
+
+/**
  * Make a test payer in this project: the secret key goes into .env (never overwritten, never printed) and the PUBLIC
  * address into payer-address.txt. Prints the address (and the faucet steps if the payer holds no USDC yet). Returns the
- * made payer ({ publicKey, swapped, usdcBalance }) or null.
+ * made payer ({ publicKey, swapped, usdcBalance }) or null. When .env already exists nothing is made; with `wasit`
+ * (null when Wasit could not start or the run is offline) it says whether the payer a full run would use is ready,
+ * and returns { publicKey, ready: true } when it is.
  */
-async function setupPayer() {
+async function setupPayer(wasit = null) {
   const envPath = path.join(root, ".env");
   if (fs.existsSync(envPath)) {
-    console.log("A .env file already exists in this folder, so the kit did not make a payer. If it holds your test payer key you are ready; otherwise run npm run check:full for the steps.");
-    return null;
+    const lookup = wasit?.cmd ? () => payerStatus(wasit, { timeoutMs: PAYER_LOOKUP_TIMEOUT_MS }) : null;
+    if (lookup) console.log(ENV_LOOKUP_TEXT); // only when Wasit is really asked, so the wait is not silent
+    const known = await existingPayerText(lookup, { price: project.variant.price, wasitCommand: WASIT_SHOWN });
+    console.log(maskSecrets(known.text));
+    return known.ready ? { publicKey: known.publicKey, ready: true } : null;
   }
   console.log("Creating a test payer on Stellar testnet (test funds only) ...");
   try {
@@ -177,28 +197,23 @@ function openAddress(url) {
 
 /** Full run only: is the payer ready, and is there a payee? Returns { payee } or { stop: exitCode }. */
 async function prepareFull(wasit) {
-  const price = parsePrice(project.variant.price);
-  const shown = `npx -y @wasit-dev/cli@${WASIT_VERSION}`;
-  const st = await run(wasit.cmd, [...wasit.prefix, "wallet", "status", "--role", "x402", "--network", NETWORK, "--json"], { shell: wasit.shell });
-  let parsed = null;
-  try {
-    parsed = JSON.parse(st.stdout);
-  } catch {
-    console.error(`Could not read the payer status: ${maskSecrets(st.stderr || st.stdout)}\nCheck your internet connection and run again.`);
+  const st = await payerStatus(wasit);
+  if (!st.ready) {
+    console.error(`Could not read the payer status: ${maskSecrets(st.unreadable)}\nCheck your internet connection and run again.`);
     return { stop: 2 };
   }
-  const ready = checkPayerReady(parsed, price);
+  const ready = st.ready;
   const envPath = path.join(root, ".env");
   if (!ready.ok && ready.reason === "not-configured" && !fs.existsSync(envPath)) {
     // No payer yet and no .env to protect: make one. The secret goes into .env and is never printed.
     console.log("No test payer yet.");
     const made = await setupPayer();
     if (made?.swapped) return prepareFull(wasit); // it already holds test USDC: carry on with the full run
-    if (!made) console.log(maskSecrets(payerHelp(ready, { price: project.variant.price, wasitCommand: shown })));
+    if (!made) console.log(maskSecrets(payerHelp(ready, { price: project.variant.price, wasitCommand: WASIT_SHOWN })));
     return { stop: 2 };
   }
   if (!ready.ok) {
-    console.log(maskSecrets(payerHelp(ready, { price: project.variant.price, wasitCommand: shown })));
+    console.log(maskSecrets(payerHelp(ready, { price: project.variant.price, wasitCommand: WASIT_SHOWN })));
     return { stop: 2 };
   }
   console.log(`Payer ${ready.publicKey} holds ${ready.balance} USDC (testnet).`);
@@ -374,14 +389,18 @@ async function main() {
       rl.close();
     }
   }
-  // Yes: make the payer now, so the participant only has to get test USDC and run the full check.
+  // Yes: make the payer now, so the participant only has to get test USDC and run the full check. With a .env already
+  // there, look up the payer in it instead (not offline: that lookup needs testnet).
   let payerReady = false;
   if (answeredYes === true) {
     console.log("");
-    payerReady = Boolean((await setupPayer())?.swapped);
+    const made = await setupPayer(choice.mode === "stub" ? null : wasit);
+    payerReady = Boolean(made?.swapped || made?.ready);
   }
   const text = nextStepsText({ ...ctx, answeredYes, payerReady });
   if (text) console.log("\n" + text);
+  // check:full refuses to run while FACILITATOR_URL is set: say so, so "npm run check:full" is not a dead end.
+  if (answeredYes === true && choice.mode === "custom") console.log("\n" + FULL_HINT_CUSTOM);
 }
 
 main().catch((e) => {

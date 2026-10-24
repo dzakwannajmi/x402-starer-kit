@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { TESTNET_USDC_ISSUER, checkPayerReady, ensureFullPayee, parsePrice, payerHelp } from "../lib/full.mjs";
 import { buildReport, maskSecrets, FULL_NOTE, FULL_UNPAID_NOTE, READONLY_NOTE } from "../lib/report.mjs";
 import { checkName } from "../lib/names.mjs";
@@ -715,6 +716,179 @@ test("the generated check script prints the payer progress through maskSecrets",
     const check = fs.readFileSync(path.join(g.dir, "scripts", "check.mjs"), "utf8");
     assert.match(check, /createPayer\(\{[\s\S]*?say: \(line\) => console\.log\(maskSecrets\(line\)\)[\s\S]*?\}\);/);
     assert.match(fs.readFileSync(path.join(g.dir, "scripts", "full.mjs"), "utf8"), /export const PAYER_PROGRESS/);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+// ---- a second `npm run check` with a .env already there (issue #18, 2026-10-24) ----
+
+// The words a yes printed before the payer could be looked up. Pinned here: every case without a readable answer keeps them.
+const OLD_ENV_TEXT =
+  "A .env file already exists in this folder, so the kit did not make a payer. If it holds your test payer key you are ready; otherwise run npm run check:full for the steps.";
+const ENV_HEAD = "A .env file already exists in this folder, so the kit did not make a new payer.";
+const PAYER_G = "GCP4DXPV3P26OJEEDY54SEVSFQPKRBIT76MOANUEUPK33UTDCGI75N7M"; // shaped like a real public address
+const HEX64 = "ab".repeat(32);
+const SHOWN = "npx -y @wasit-dev/cli@0.7.0";
+const statusOf = (publicKey, balances, exists = true) => [{ role: "x402", configured: true, publicKey, status: { exists, balances } }];
+const usdcRow = (balance) => [{ code: "USDC", issuer: TESTNET_USDC_ISSUER, balance }];
+// What `wasit wallet status ... --json` printed, as run() hands it over. calls counts the lookups.
+const fakeWasit = (reply) => {
+  const f = async () => {
+    f.calls++;
+    if (reply instanceof Error) throw reply;
+    return reply;
+  };
+  f.calls = 0;
+  return f;
+};
+const json = (rows, code = 0) => ({ code, stdout: JSON.stringify(rows, null, 2), stderr: "" });
+
+/** The generated project's own copies of the helpers, so the code under test is the code a participant runs. */
+async function generatedHelpers(fn) {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "kit-env-"));
+  try {
+    const g = generateProject({ name: "Env Test", seed: 8, parentDir: parent });
+    const load = (f) => import(pathToFileURL(path.join(g.dir, "scripts", f)).href);
+    await fn({ full: await load("full.mjs"), next: await load("nextsteps.mjs"), report: await load("report.mjs"), dir: g.dir });
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+}
+
+/** What check.mjs does after a yes when .env exists: the shared lookup, then the text, then the closing text. */
+async function secondCheck({ full, next }, runStatus, price = "$0.01") {
+  const readStatus = runStatus ? () => full.readPayerStatus(runStatus, full.parsePrice(price)) : null;
+  const r = await full.existingPayerText(readStatus, { price, wasitCommand: SHOWN });
+  const closing = next.nextStepsText({ full: false, outcome: "conformant", exerciseUnsolved: false, answeredYes: true, payerReady: r.ready });
+  return { ...r, closing };
+}
+
+test("readPayerStatus reads Wasit's JSON whatever the exit code, and hands back Wasit's own text when it is not JSON", async () => {
+  const { readPayerStatus } = await import("../lib/full.mjs");
+  const ok = fakeWasit(json(statusOf(PAYER_G, usdcRow("18.5"))));
+  assert.deepEqual(await readPayerStatus(ok, 0.01), { ready: { ok: true, publicKey: PAYER_G, balance: 18.5 } });
+  assert.equal(ok.calls, 1);
+  // with --role, Wasit exits 2 for a payer it could not look up, and still prints the row
+  assert.equal((await readPayerStatus(fakeWasit(json([{ role: "x402", configured: false }], 2)), 0.01)).ready.reason, "not-configured");
+  assert.deepEqual(await readPayerStatus(fakeWasit({ code: -1, stdout: "", stderr: "Error: spawn npx ENOENT" }), 0.01), { ready: null, unreadable: "Error: spawn npx ENOENT" });
+  assert.deepEqual(await readPayerStatus(fakeWasit({ code: 1, stdout: "npm error 404", stderr: "" }), 0.01), { ready: null, unreadable: "npm error 404" });
+  assert.deepEqual(await readPayerStatus(fakeWasit({ code: null, stdout: "", stderr: "" }), 0.01), { ready: null, unreadable: "" }); // killed by the time limit
+  assert.deepEqual(await readPayerStatus(fakeWasit({ code: 1, stdout: "x", stderr: "y" }), 0.01), { ready: null, unreadable: "y" }); // stderr wins when both have text
+});
+
+test("second check, payer ready: the public address and balance, and straight to npm run check:full", async () => {
+  await generatedHelpers(async (h) => {
+    const wasit = fakeWasit(json(statusOf(PAYER_G, [{ code: "XLM", balance: "9989.99" }, ...usdcRow("8.8000000")])));
+    const r = await secondCheck(h, wasit);
+    assert.equal(wasit.calls, 1); // one read-only lookup, nothing else
+    assert.equal(r.ready, true);
+    assert.equal(r.publicKey, PAYER_G);
+    assert.equal(r.text, `${ENV_HEAD} Wasit checked your test payer:\nPayer ready: ${PAYER_G} holds 8.8 USDC (testnet).`);
+    assert.equal(r.closing, h.next.TEXT.runFullNow);
+    assert.match(r.closing, /^You must run this command to run the full payment check:\n  npm run check:full/);
+  });
+});
+
+test("second check, payer not ready: the same help a full run gives, and no runFullNow", async () => {
+  await generatedHelpers(async (h) => {
+    const cases = [
+      json(statusOf(PAYER_G, usdcRow("0.0000000"))), // trustline, no USDC
+      json(statusOf(PAYER_G, [{ code: "XLM", balance: "10000" }])), // no trustline yet
+      json(statusOf(PAYER_G, usdcRow("0.01"))), // under twice the price
+      json(statusOf(PAYER_G, [], false)), // not on testnet yet
+      json([{ role: "x402", configured: false }], 2), // .env without a payer key
+      json([{ role: "x402", configured: true, error: "STELLAR_PRIVATE_KEY is not a valid Stellar secret key." }], 2),
+      json([{ role: "x402", configured: true, publicKey: PAYER_G, error: "Could not reach https://horizon-testnet.stellar.org" }], 2),
+    ];
+    for (const reply of cases) {
+      const r = await secondCheck(h, fakeWasit(reply));
+      const expected = h.full.checkPayerReady(JSON.parse(reply.stdout), 0.01);
+      assert.equal(expected.ok, false);
+      assert.equal(r.ready, false, reply.stdout);
+      assert.equal(r.text, `${ENV_HEAD}\n${h.full.payerHelp(expected, { price: "$0.01", wasitCommand: SHOWN })}`);
+      assert.equal(r.closing, h.next.TEXT.runFull);
+    }
+  });
+});
+
+test("second check without a readable answer, or offline: the old words, unchanged", async () => {
+  await generatedHelpers(async (h) => {
+    assert.equal(h.full.ENV_EXISTS_TEXT, OLD_ENV_TEXT);
+    // no lookup at all (Wasit could not start, or the run is offline): Wasit is never asked
+    const none = await secondCheck(h, null);
+    assert.deepEqual({ ready: none.ready, text: none.text }, { ready: false, text: OLD_ENV_TEXT });
+    assert.equal(none.closing, h.next.TEXT.runFull);
+    const unreadable = [
+      { code: -1, stdout: "", stderr: "Error: spawn npx ENOENT" },
+      { code: 1, stdout: "npm error code E404", stderr: "npm error 404 Not Found" },
+      { code: null, stdout: '[{"role":"x40', stderr: "" }, // cut off by the time limit
+      new Error("spawn failed"),
+      json(statusOf(PAYER_G, {})), // balances of a shape checkPayerReady cannot read
+      json(statusOf(PUB, usdcRow("18.5"))), // "ready", but not a public address
+      json(statusOf(undefined, usdcRow("18.5"))),
+      json(statusOf(KEY_LIKE, usdcRow("18.5"))), // a secret key where the address should be is never printed as one
+    ];
+    for (const reply of unreadable) {
+      const wasit = fakeWasit(reply);
+      const r = await secondCheck(h, wasit);
+      assert.equal(wasit.calls, 1);
+      assert.deepEqual({ ready: r.ready, text: r.text }, { ready: false, text: OLD_ENV_TEXT }, String(reply?.stdout ?? reply));
+      assert.equal(r.closing, h.next.TEXT.runFull);
+    }
+  });
+});
+
+test("second check: nothing that looks like a key or a 64-hex value is printed, whatever Wasit answers", async () => {
+  await generatedHelpers(async (h) => {
+    const leak = `${KEY_LIKE} ${HEX64} 0x${HEX64}`;
+    const replies = [
+      json(statusOf(PAYER_G, usdcRow("18.5"))),
+      json(statusOf(PAYER_G, usdcRow("0"))),
+      json([{ role: "x402", configured: true, error: `bad key ${leak}` }], 2),
+      json([{ role: "x402", configured: true, publicKey: KEY_LIKE, status: { exists: false } }], 2),
+      json(statusOf(KEY_LIKE, usdcRow("18.5"))),
+      { code: 1, stdout: leak, stderr: leak },
+      null,
+    ];
+    for (const reply of replies) {
+      const r = await secondCheck(h, reply ? fakeWasit(reply) : null);
+      const printed = `${h.report.maskSecrets(r.text)}\n${r.closing}`; // check.mjs prints the text through maskSecrets
+      assert.ok(!/S[A-Z2-7]{55}/.test(printed) && !/[0-9a-fA-F]{64}/.test(printed), printed);
+      assert.ok(!printed.includes(KEY_LIKE));
+    }
+    // the kit's own words carry nothing secret even before masking; only Wasit's words need it
+    for (const t of [OLD_ENV_TEXT, ENV_HEAD, h.full.ENV_LOOKUP_TEXT, ...Object.values(h.next.TEXT)]) assert.ok(!/S[A-Z2-7]{55}|[0-9a-fA-F]{64}/.test(t));
+    assert.equal(h.full.ENV_LOOKUP_TEXT, "Checking the test payer in .env with Wasit (read-only, testnet) ...");
+  });
+});
+
+test("the generated check script looks the payer up through one shared helper, prints it masked, and skips it offline", () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "kit-wire-"));
+  try {
+    const g = generateProject({ name: "Wire Test", seed: 9, parentDir: parent });
+    const check = fs.readFileSync(path.join(g.dir, "scripts", "check.mjs"), "utf8");
+    const fullSrc = fs.readFileSync(path.join(g.dir, "scripts", "full.mjs"), "utf8");
+    // one `wallet status` command in the whole script, run in the project folder: both callers share it
+    assert.equal(check.match(/"wallet", "status"/g).length, 1);
+    assert.match(check, /const args = \[\.\.\.wasit\.prefix, "wallet", "status", "--role", "x402", "--network", NETWORK, "--json"\];/);
+    assert.match(check, /const NETWORK = "stellar:testnet";/);
+    assert.match(check, /spawn\(cmd, args, \{ cwd: root, shell, stdio: \["ignore", "pipe", "pipe"\] \}\)/);
+    // the full run keeps run()'s own time limit; the lookup after a yes gives up after 30 seconds
+    assert.match(check, /async function prepareFull\(wasit\) \{\n  const st = await payerStatus\(wasit\);/);
+    assert.match(check, /function run\(cmd, args, \{ timeoutMs = 180000, shell = false \} = \{\}\)/);
+    assert.match(check, /return readPayerStatus\(\(\) => run\(wasit\.cmd, args, \{ shell: wasit\.shell, timeoutMs \}\), parsePrice\(project\.variant\.price\)\);/);
+    assert.match(check, /const PAYER_LOOKUP_TIMEOUT_MS = 30000;/);
+    assert.match(
+      check,
+      /if \(fs\.existsSync\(envPath\)\) \{\n    const lookup = wasit\?\.cmd \? \(\) => payerStatus\(wasit, \{ timeoutMs: PAYER_LOOKUP_TIMEOUT_MS \}\) : null;\n    if \(lookup\) console\.log\(ENV_LOOKUP_TEXT\);[^\n]*\n    const known = await existingPayerText\(lookup, [^\n]+\);\n    console\.log\(maskSecrets\(known\.text\)\);\n    return known\.ready \? \{ publicKey: known\.publicKey, ready: true \} : null;\n  \}/,
+    );    // the full run makes its payer exactly as before; only the yes after a read-only run looks up an existing one
+    assert.match(check, /const made = await setupPayer\(\);\n    if \(made\?\.swapped\) return prepareFull\(wasit\);/);
+    assert.match(check, /const made = await setupPayer\(choice\.mode === "stub" \? null : wasit\);\n    payerReady = Boolean\(made\?\.swapped \|\| made\?\.ready\);/);
+    assert.ok(!/checkPayerReady\(/.test(check), "the status is judged in scripts/full.mjs only");
+    // every name check.mjs takes from ./full.mjs exists there
+    const names = /import \{([^}]+)\} from "\.\/full\.mjs";/.exec(check)[1].split(",").map((s) => s.trim());
+    for (const n of names) assert.match(fullSrc, new RegExp(`export (?:async function|function|const) ${n}\\b`), n);
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
   }

@@ -101,8 +101,13 @@ You need a test payer that holds test USDC. The kit makes one for you:
 The payee, the account that receives the payment, is a throwaway account made by the kit. Its secret key is thrown
 away as soon as it is set up, so nobody can spend from it.
 
-If you already have a `.env` file, the kit does not touch it and gives you manual steps instead. A full run needs the
-payer to hold at least twice the seller's price.
+If you already have a `.env` file, the kit does not touch it and makes no payer. If you answer yes after `npm run check`,
+the kit asks Wasit about the payer a full run would use: `STELLAR_PRIVATE_KEY` from `.env`, or from your shell if you
+exported it there. Wasit reads that key to work out the public address, then reads its testnet balance; it signs and
+sends nothing. When the payer is ready, the kit shows its public address and USDC balance and tells you to run
+`npm run check:full`; when it is not, it shows the manual steps. Offline, or when Wasit cannot be asked, it prints the
+note that a `.env` file already exists. If `FACILITATOR_URL` is set, it also reminds you to unset it: `check:full`
+uses the public testnet facilitator only. A full run needs the payer to hold at least twice the seller's price.
 
 ## Practice mode: find the planted defect
 

@@ -139,7 +139,7 @@ test("every generated file is valid JavaScript, for every framework and method",
   for (const framework of FRAMEWORKS) {
     for (const method of METHODS) {
       const out = gen({ framework, method, name: `syntax ${framework} ${method}` });
-      for (const f of ["server.mjs", "scripts/check.mjs", "scripts/report.mjs", "scripts/facilitator.mjs"]) {
+      for (const f of ["server.mjs", "scripts/check.mjs", "scripts/report.mjs", "scripts/facilitator.mjs", "scripts/full.mjs", "scripts/nextsteps.mjs"]) {
         const r = spawnSync(process.execPath, ["--check", path.join(out.dir, f)], { encoding: "utf8" });
         assert.equal(r.status, 0, `${framework} ${method} ${f}: ${r.stderr}`);
       }
