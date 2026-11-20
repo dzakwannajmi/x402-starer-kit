@@ -27,7 +27,8 @@ const USAGE = `x402-starter-kit
   Without --seed a random seed is used and printed.
 
   --exercise   break and fix: one defect is written into server.mjs on purpose; find it from the report.
-               The defect is picked from the seed unless you name one with --defect.
+               The defect is picked from the seed unless you name one with --defect. v1-body (the old x402 v1
+               challenge, for builders who meet a v1 service) is only given by name.
 `;
 
 const { positionals, values } = parseArgs({

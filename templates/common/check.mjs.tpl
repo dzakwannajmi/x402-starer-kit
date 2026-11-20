@@ -7,7 +7,8 @@
 //   npm run check                 uses the public testnet facilitator when it is reachable, otherwise offline mode
 //   npm run check -- --offline    force offline mode (a local stand-in for the facilitator; challenge checks only)
 //   npm run check -- --online     force the public testnet facilitator
-//   npm run check:full            all 10 checks, including test payments on Stellar testnet. It needs a funded testnet
+//   npm run check:full            X402-01 to 10, including test payments on Stellar testnet (X402-11 is skipped:
+//                                 see the README). It needs a funded testnet
 //                                 payer: run it once and it tells you what is missing. Public facilitator only.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -26,7 +27,7 @@ const { method, path: routePath } = project.variant;
 const NETWORK = "stellar:testnet";
 // Wasit runs through npx in its own folder, NOT inside this project: its dependency tree (it needs an older
 // @stellar/stellar-sdk for MPP) would clash with the newer one the x402 libraries use here.
-const WASIT_VERSION = "0.7.0";
+const WASIT_VERSION = "0.8.0-beta.1";
 const WASIT_SHOWN = `npx -y @wasit-dev/cli@${WASIT_VERSION}`; // how the payer help tells the participant to run Wasit
 const IS_WIN = process.platform === "win32";
 const FACILITATOR_HINT = "The seller could not reach the public testnet facilitator. Check your internet connection, or run: npm run check -- --offline";

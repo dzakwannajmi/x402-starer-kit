@@ -57,7 +57,7 @@ Run these inside the project folder.
 | `npm run check` | Free checks X402-01 to 05: the payment request is well formed. No payment is made. Writes `report.md` and `report.json` |
 | `npm run check -- --offline` | Same, with a local stand-in for the facilitator. Challenge checks only |
 | `npm run check -- --online` | Same, but insists on the public testnet facilitator |
-| `npm run check:full` | All 10 checks, including test payments. See below. Writes `report-full.md` and `report-full.json` |
+| `npm run check:full` | X402-01 to 10, including test payments (X402-11 shows as skipped). See below. Writes `report-full.md` and `report-full.json` |
 | `npm run feedback` | Opens a new feedback issue with the questions already in place |
 | `npm run feedback -- --example` | Prints a filled-in example first, to copy the shape from |
 | `npm run exercise -- --hint` | Practice mode only: a nudge, without the answer |
@@ -80,10 +80,14 @@ Options of `node kit.mjs new`:
 
 ## The full payment check
 
-`npm run check:full` runs all 10 checks. X402-06 pays your seller once with test USDC from a test payer, and
+`npm run check:full` runs X402-01 to 10. X402-06 pays your seller once with test USDC from a test payer, and
 X402-07 to 10 send four payments your seller must refuse (a corrupted signature, a repeated payment, an
 underpayment and an expired authorization). The price is shown before it starts. It uses test funds only, on Stellar
 testnet, and needs the public testnet facilitator.
+
+Wasit 0.8.0-beta.1 also lists `X402-11`, "Rejected Request Not Settled", as skipped. It needs a request your
+seller must refuse, which `wasit run` reads from a `wasit.config.json`; the kit's check does not use one. A skip is
+not a failure.
 
 You need a test payer that holds test USDC. The kit makes one for you:
 
@@ -122,12 +126,18 @@ In practice mode one defect is written into `server.mjs` on purpose. Run `npm ru
 problem and fix it. When no check fails, the exercise says it is solved. `npm run exercise -- --hint` gives a nudge and
 `npm run exercise -- --reveal` shows the answer. The full payment check is only allowed after the exercise is solved.
 
+One practice project is only made when you ask for it by name: `node kit.mjs new --name "Fix Me" --defect v1-body`.
+It moves the payment challenge into the response body, the way x402 v1 did. Wasit grades x402 v2, so it reports the
+service as unsupported (neither a failure nor a pass) instead of failing a check; the exercise is solved once Wasit can
+grade the service and every check passes. On Stellar, x402 is v2 only, so a Stellar workshop never gets this one by
+chance. It is for builders who meet a v1 service, for example on another chain.
+
 ## Reports
 
 | File | Made by | Contains |
 | --- | --- | --- |
 | `report.md`, `report.json` | `npm run check` | The five free checks, each PASS, FAIL, SKIP or ERROR with Wasit's reason |
-| `report-full.md`, `report-full.json` | `npm run check:full` | All ten checks and a "Payment proof" section: the full transaction hash, the payer and the payee, each with a Stellar Expert link so anyone can check the payment on the test network |
+| `report-full.md`, `report-full.json` | `npm run check:full` | Every check (X402-11 skipped) and a "Payment proof" section: the full transaction hash, the payer and the payee, each with a Stellar Expert link so anyone can check the payment on the test network |
 
 The report is built by code from Wasit's own output. The kit never decides a result and nothing is written by a model.
 Keys are masked. The full transaction hash is shown on purpose: it is public chain data, and it is what lets anyone check the payment.

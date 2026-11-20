@@ -20,6 +20,7 @@ const exec = (cmd, args, cwd) => {
   return { status: r.status, out: `${r.stdout}${r.stderr}`.trim() };
 };
 const failing = (report) => report.results.filter((x) => x.status === "FAIL").map((x) => x.id).sort();
+const unsupported = (report) => report.results.filter((x) => x.status === "SKIP" && x.skipKind === "unsupported").map((x) => x.id).sort();
 const summary = (report) => report.results.map((x) => `${x.id.slice(-2)}:${x.status}`).join(" ");
 
 const rows = [];
@@ -42,8 +43,10 @@ for (const framework of FRAMEWORKS) {
       const observed = failing(r1);
       const note = `${summary(r1)}`;
       assert.deepEqual(observed, [...d.expectedFailing].sort(), `Wasit reported ${note}`);
+      assert.deepEqual(unsupported(r1), [...(d.expectedUnsupported ?? [])].sort(), `unsupported: Wasit reported ${note}`);
       assert.equal(r1.exercise.status, "defect-present");
-      assert.equal(broken.status, 1, `exit code ${broken.status}`);
+      // A failing check exits 1 (non-conformant); a service Wasit does not grade exits 2 (no verdict).
+      assert.equal(broken.status, d.expectedFailing.length > 0 ? 1 : 2, `exit code ${broken.status}`);
       assert.ok(!JSON.stringify(r1).includes(d.id), "the report must not name the defect");
 
       // 2. the participant fixes it (here: the clean server)

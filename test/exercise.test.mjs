@@ -5,8 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DEFECTS, DEFECT_IDS, defectById } from "../lib/defects.mjs";
-import { generateProject, KitError } from "../lib/generate.mjs";
-import { FRAMEWORKS } from "../lib/variants.mjs";
+import { defectFromSeed, generateProject, KitError } from "../lib/generate.mjs";
+import { FRAMEWORKS, mulberry32 } from "../lib/variants.mjs";
 import { buildReport, exerciseStatus, renderMarkdown, renderTerminal } from "../lib/report.mjs";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "x402kit-ex-"));
@@ -19,8 +19,10 @@ test("catalogue integrity: unique ids, real check ids, a hint that does not give
   assert.equal(new Set(DEFECT_IDS).size, DEFECTS.length);
   for (const d of DEFECTS) {
     assert.match(d.id, /^[a-z0-9]+(-[a-z0-9]+)*$/);
-    assert.ok(d.expectedFailing.length >= 1);
-    for (const c of d.expectedFailing) assert.match(c, /^X402-0[1-5]$/, `${d.id}: a challenge-level defect fails one of X402-01 to 05`);
+    const expected = [...d.expectedFailing, ...(d.expectedUnsupported ?? [])];
+    assert.ok(expected.length >= 1, `${d.id}: the defect shows in at least one check`);
+    for (const c of expected) assert.match(c, /^X402-0[1-5]$/, `${d.id}: a challenge-level defect shows in X402-01 to 05`);
+    if (d.expectedUnsupported) assert.equal(d.expectedFailing.length, 0, `${d.id}: an unsupported service fails no check`);
     for (const f of ["title", "hint", "explanation", "body"]) assert.ok(d[f].trim().length > 20, `${d.id}.${f}`);
     assert.ok(!d.hint.includes(d.id), `${d.id}: the hint must not contain the defect's name`);
     assert.ok(!/pubnet|mainnet|stellar:public/i.test(d.body), `${d.id}: testnet only`);
@@ -69,12 +71,12 @@ test("a normal project has no clean-up block, no exercise dotfile and no exercis
   }
 });
 
-test("--exercise without a named defect picks one from the seed: same seed, same defect; every defect is reachable", () => {
+test("--exercise without a named defect picks one from the seed: same seed, same defect; every defect but a by-name-only one is reachable", () => {
   const pick = (seed) => JSON.parse(read(gen({ exercise: true, seed, name: `seed ${seed}` }).dir, ".exercise.json")).defect;
   assert.equal(pick(5), pick(5));
   const seen = new Set();
   for (let seed = 0; seed < 120; seed++) seen.add(pick(seed));
-  assert.equal(seen.size, DEFECTS.length);
+  assert.deepEqual([...seen].sort(), DEFECTS.filter((d) => !d.byNameOnly).map((d) => d.id).sort());
 });
 
 test("an unknown defect is rejected", () => {
@@ -106,7 +108,7 @@ const wasitJson = (results) => ({
 });
 const common = {
   project: { name: "x", seed: 1, variant: { framework: "express", method: "GET", path: "/paid", resource: "fun-fact", price: "$0.01", network: "stellar:testnet", defect: null } },
-  wasit: { version: "0.7.0", command: "wasit test" },
+  wasit: { version: "0.8.0-beta.1", command: "wasit test" },
   facilitator: { mode: "stub", url: "http://127.0.0.1:1" },
   kitVersion: "0.1.0",
   generatedAt: "2026-10-18T00:00:00.000Z",
@@ -139,4 +141,47 @@ test("exercise status lists what failed, and the terminal and Markdown say it wi
   }
   const solved = buildReport({ ...common, wasitJson: wasitJson(allPass), exercise: { expectedFailing: ["X402-02"] } });
   assert.match(renderTerminal(solved), /Solved: no check fails/);
+});
+
+test("a by-name-only defect is never drawn from a seed, and every other seed keeps its defect from kit 0.1.1", () => {
+  const byName = DEFECTS.filter((d) => d.byNameOnly).map((d) => d.id);
+  assert.deepEqual(byName, ["v1-body"]);
+  const oldDraw = (seed) => DEFECTS[Math.floor(mulberry32((seed ^ 0x9e3779b9) >>> 0)() * DEFECTS.length)];
+  let kept = 0;
+  for (let seed = 0; seed < 5000; seed++) {
+    const d = defectFromSeed(seed);
+    assert.ok(!d.byNameOnly, `seed ${seed} drew ${d.id}`);
+    if (!oldDraw(seed).byNameOnly) {
+      assert.equal(d.id, oldDraw(seed).id, `seed ${seed} changed its defect`);
+      kept++;
+    }
+  }
+  assert.ok(kept > 3500, `most seeds keep their defect (${kept})`);
+  // Named, it is still given.
+  const out = gen({ defect: "v1-body", name: "ex by name" });
+  assert.equal(out.exercise, true);
+  const project = JSON.parse(read(out.dir, "project.json"));
+  assert.deepEqual(project.exercise, { expectedFailing: [], expectedUnsupported: ["X402-02", "X402-03", "X402-04", "X402-05"] });
+});
+
+test("an exercise that starts unsupported: present while Wasit cannot grade it, solved once it conforms", () => {
+  const ex = { expectedFailing: [], expectedUnsupported: ["X402-02", "X402-03", "X402-04", "X402-05"] };
+  const skipU = (id) => ({ id, name: id, status: "SKIP", skipKind: "unsupported", detail: "x402 v1 challenge" });
+  const unsupportedRun = { ...wasitJson([result("X402-01", "PASS"), ...["02", "03", "04", "05"].map((n) => skipU(`X402-${n}`))]), outcome: "no-verdict" };
+  const present = buildReport({ ...common, wasitJson: unsupportedRun, exercise: ex });
+  assert.equal(present.exercise.status, "defect-present");
+  assert.deepEqual(present.exercise.observedUnsupported, ["X402-02", "X402-03", "X402-04", "X402-05"]);
+  assert.equal(present.results[1].skipKind, "unsupported");
+  for (const out of [renderTerminal(present), renderMarkdown(present)]) {
+    assert.match(out, /Wasit still cannot grade this service: X402-02, X402-03, X402-04, X402-05 are reported as unsupported/);
+    for (const id of DEFECT_IDS) assert.ok(!out.includes(id));
+  }
+  assert.equal(buildReport({ ...common, wasitJson: wasitJson(allPass), exercise: ex }).exercise.status, "solved");
+  const failingNow = [result("X402-01", "PASS"), result("X402-02", "FAIL"), result("X402-03", "SKIP"), result("X402-04", "SKIP"), result("X402-05", "SKIP")];
+  assert.equal(buildReport({ ...common, wasitJson: wasitJson(failingNow), exercise: ex }).exercise.status, "different");
+  // A skip for another reason (a dependency) is not "unsupported": no statement is made.
+  const depSkips = { ...wasitJson([result("X402-01", "PASS"), ...["02", "03", "04", "05"].map((n) => ({ ...result(`X402-${n}`, "SKIP"), skipKind: "dependency" }))]), outcome: "no-verdict" };
+  assert.equal(buildReport({ ...common, wasitJson: depSkips, exercise: ex }).exercise.status, "unknown");
+  // An exercise that starts failing is not "present" just because checks are unsupported.
+  assert.equal(buildReport({ ...common, wasitJson: unsupportedRun, exercise: { expectedFailing: ["X402-02"] } }).exercise.status, "unknown");
 });

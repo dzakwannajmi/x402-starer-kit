@@ -25,7 +25,7 @@ function expectConformant(r, { framework, method, mode }) {
   assert.equal(r.report.facilitator.mode, mode);
   assert.equal(r.report.project.variant.framework, framework);
   assert.equal(r.report.project.variant.method, method);
-  assert.equal(r.report.wasit.version, "0.7.0");
+  assert.equal(r.report.wasit.version, "0.8.0-beta.1");
   assert.equal(r.report.notes.includes(STUB_NOTE), mode === "stub");
   return `${r.report.counts.passed} passed, facilitator ${r.report.facilitator.mode}`;
 }

@@ -12,7 +12,7 @@ const project = {
 };
 const common = {
   project,
-  wasit: { version: "0.7.0", command: "wasit test --target http://127.0.0.1:1/paid --read-only --json" },
+  wasit: { version: "0.8.0-beta.1", command: "wasit test --target http://127.0.0.1:1/paid --read-only --json" },
   facilitator: { mode: "real", url: "https://www.x402.org/facilitator" },
   kitVersion: "0.1.0",
   generatedAt: "2026-10-18T12:00:00.000Z",

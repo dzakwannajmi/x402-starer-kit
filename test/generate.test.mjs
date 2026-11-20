@@ -30,7 +30,7 @@ test("generates the expected files with exact pinned versions, for every framewo
     assert.equal(pkg.devDependencies, undefined);
     assert.ok(!JSON.stringify(pkg).includes("@wasit-dev"));
     const check = text(out, "scripts/check.mjs");
-    assert.match(check, /const WASIT_VERSION = "0\.7\.0";/);
+    assert.match(check, /const WASIT_VERSION = "0\.8\.0-beta\.1";/);
     assert.ok(check.includes("@wasit-dev/cli@${WASIT_VERSION}"));
     assert.equal(text(out, ".npmrc").trim(), "ignore-scripts=true");
   }

@@ -20,7 +20,7 @@ const PRICE = pickVariant(SEED).variant.price; // the price of the project runCh
 const PAYER_G = "GCP4DXPV3P26OJEEDY54SEVSFQPKRBIT76MOANUEUPK33UTDCGI75N7M";
 const KEY_LIKE = "S" + "C".repeat(55); // shaped like a Stellar secret key; not a real one
 const HEX64 = "cd".repeat(32);
-const SHOWN = "npx -y @wasit-dev/cli@0.7.0";
+const SHOWN = "npx -y @wasit-dev/cli@0.8.0-beta.1";
 const OLD_ENV_TEXT =
   "A .env file already exists in this folder, so the kit did not make a payer. If it holds your test payer key you are ready; otherwise run npm run check:full for the steps.";
 const CUSTOM_HINT = "npm run check:full uses the public testnet facilitator only: unset FACILITATOR_URL before you run it.";
@@ -29,7 +29,7 @@ const CUSTOM_HINT = "npm run check:full uses the public testnet facilitator only
 const FAKE_WASIT = `import fs from "node:fs";
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_WASIT_LOG, JSON.stringify({ args, cwd: fs.realpathSync.native(process.cwd()) }) + "\\n");
-if (args[0] === "--version") { console.log("0.7.0"); process.exit(0); }
+if (args[0] === "--version") { console.log("0.8.0-beta.1"); process.exit(0); }
 if (args[0] === "test") { process.stdout.write(fs.readFileSync(process.env.FAKE_WASIT_TEST, "utf8")); process.exit(0); }
 if (args[0] === "wallet" && args[1] === "status") {
   process.stdout.write(process.env.FAKE_STATUS_STDOUT ?? "");

@@ -44,8 +44,8 @@ test("checkPayerReady covers every state", () => {
 
 test("payerHelp gives next steps and never prints key material", () => {
   for (const reason of ["not-configured", "no-account", "no-usdc", "low-usdc"]) {
-    const text = payerHelp({ reason, publicKey: PUB, balance: 0.001 }, { price: "$0.01", wasitCommand: "npx -y @wasit-dev/cli@0.7.0" });
-    assert.match(text, /wasit-dev\/cli@0\.7\.0|faucet\.circle\.com/);
+    const text = payerHelp({ reason, publicKey: PUB, balance: 0.001 }, { price: "$0.01", wasitCommand: "npx -y @wasit-dev/cli@0.8.0-beta.1" });
+    assert.match(text, /wasit-dev\/cli@0\.8\.0-beta\.1|faucet\.circle\.com/);
     assert.ok(!/S[A-Z2-7]{55}/.test(text));
   }
 });
@@ -163,7 +163,7 @@ test("a full report says full mode and carries the full note", () => {
   const wasitJson = JSON.parse(fs.readFileSync(new URL("./fixtures/wasit-conformant.json", import.meta.url), "utf8"));
   const r = buildReport({
     project: { name: "n", seed: 1, variant: {} },
-    wasit: { version: "0.7.0", command: "wasit test" },
+    wasit: { version: "0.8.0-beta.1", command: "wasit test" },
     facilitator: { mode: "real", url: "u" },
     kitVersion: "1",
     generatedAt: "2026-10-18T00:00:00Z",
@@ -187,7 +187,7 @@ test("a full report says full mode and carries the full note", () => {
 function base(wasitJson) {
   return {
     project: { name: "n", seed: 1, variant: {} },
-    wasit: { version: "0.7.0", command: "wasit test" },
+    wasit: { version: "0.8.0-beta.1", command: "wasit test" },
     facilitator: { mode: "real", url: "u" },
     kitVersion: "1",
     generatedAt: "2026-10-19T00:00:00Z",
@@ -265,7 +265,7 @@ test("the feedback link opens a new issue with the title and the questions in pl
 test("the report summaries are filled in from the participant's own reports, and the address stays short", async () => {
   const { buildFeedbackUrl, buildFeedbackBody, summarizeReport } = await import("../lib/feedback.mjs");
   const mk = (mode, n, extra = []) => ({
-    wasit: { mode, version: "0.7.0" },
+    wasit: { mode, version: "0.8.0-beta.1" },
     generatedAt: "2026-10-19T12:00:00Z",
     outcome: "conformant",
     counts: { passed: n, failed: 0, errored: 0, skipped: 0 },
@@ -729,7 +729,7 @@ const OLD_ENV_TEXT =
 const ENV_HEAD = "A .env file already exists in this folder, so the kit did not make a new payer.";
 const PAYER_G = "GCP4DXPV3P26OJEEDY54SEVSFQPKRBIT76MOANUEUPK33UTDCGI75N7M"; // shaped like a real public address
 const HEX64 = "ab".repeat(32);
-const SHOWN = "npx -y @wasit-dev/cli@0.7.0";
+const SHOWN = "npx -y @wasit-dev/cli@0.8.0-beta.1";
 const statusOf = (publicKey, balances, exists = true) => [{ role: "x402", configured: true, publicKey, status: { exists, balances } }];
 const usdcRow = (balance) => [{ code: "USDC", issuer: TESTNET_USDC_ISSUER, balance }];
 // What `wasit wallet status ... --json` printed, as run() hands it over. calls counts the lookups.
